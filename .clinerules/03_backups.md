@@ -1,5 +1,0 @@
-- If a project isn't already using another versioning solution, like GitHub, use basic file-based versioning:
-  - When making changes to a file, don't apply them to the original file. Instead, first create a backup of the file, adding a timestamp after its name, like "index_21-59_22-03-2025.html" (filename_time_date.extension).
-  - Place/move all such backups within a backups subfolder in the project's folder to avoid cluttering the main directory.
-  - If the "backups" subfolder doesn't exist, create it.
-  - Then and only then apply the changes ONLY to the actual file, NOT the backup.
