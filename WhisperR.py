@@ -372,13 +372,36 @@ class VoiceControlApp:
     def setup_tray_icon_thread(self):
         try:
             # Determine the correct path to icon.png
+            icon_path = None
+            possible_paths = []
+            
+            # Check in MEIPASS first if bundled
             if hasattr(sys, '_MEIPASS'):
-                # Running as bundled executable; use sys._MEIPASS
-                icon_path = os.path.join(sys._MEIPASS, 'icon.png')
+                possible_paths.append(os.path.join(sys._MEIPASS, 'icon.png'))
+            
+            # Check in current directory
+            possible_paths.append('icon.png')
+            
+            # Check in script directory
+            possible_paths.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.png'))
+            
+            # Find first existing path
+            icon_path = None
+            try:
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        icon_path = path
+                        break
+            except Exception as e:
+                self.log_message("essential", f"Error checking icon paths: {e}")
+            
+            
+            if not icon_path:
+                self.log_message("essential", "Warning: icon.png not found in any standard locations")
+                # Create a blank image as fallback
+                image = Image.new('RGB', (64, 64), color='gray')
             else:
-                # Running as script; use current directory
-                icon_path = 'icon.png'
-            image = Image.open(icon_path)
+                image = Image.open(icon_path)
             menu = pystray.Menu(pystray.MenuItem("Show", self.show_window_action), pystray.MenuItem("Quit", self.quit_app_action))
             self.tray_icon = pystray.Icon("Voice Control App", image, "Voice Control App", menu)
             self.log_message("essential", "Running tray icon...")
@@ -589,11 +612,26 @@ class VoiceControlApp:
         export_dir = os.path.normpath(getattr(self, 'export_folder', '.'))
         if not os.path.exists(export_dir):
             try:
-                os.makedirs(export_dir)
+                # Ask user if they want to create the directory
+                if messagebox.askyesno("Directory Not Found", 
+                                     f"Export directory '{export_dir}' not found.\nCreate it now?"):
+                    os.makedirs(export_dir)
+                    self.log_message("essential", f"Created export directory: {export_dir}")
+                else:
+                    # Fallback to executable directory if user declines
+                    if hasattr(sys, '_MEIPASS'):
+                        export_dir = os.path.normpath(sys._MEIPASS)
+                    else:
+                        export_dir = os.path.normpath(os.path.dirname(os.path.abspath(__file__)))
+                    self.log_message("essential", f"Using fallback directory: {export_dir}")
             except OSError as e:
                 self.log_message("essential", f"Error creating dir '{export_dir}': {e}")
-                # Fallback to current dir, normalized
-                export_dir = os.path.normpath(".")
+                # Fallback to executable directory
+                if hasattr(sys, '_MEIPASS'):
+                    export_dir = os.path.normpath(sys._MEIPASS)
+                else:
+                    export_dir = os.path.normpath(os.path.dirname(os.path.abspath(__file__)))
+                self.log_message("essential", f"Using fallback directory: {export_dir}")
         # Construct and normalize the full filepath before adding to queue
         filepath = os.path.normpath(os.path.join(export_dir, filename))
 

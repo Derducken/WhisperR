@@ -1,2 +1,9 @@
 node_modules
 OldVersions
+dist
+build
+prompt.json
+config.json
+compile-to-exe.bat
+commands.json
+icon.png
