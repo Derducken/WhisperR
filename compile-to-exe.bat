@@ -1,1 +1,0 @@
-﻿python -m PyInstaller --onefile --add-data "icon.png;." voice_control_app.py
