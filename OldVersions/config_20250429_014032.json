@@ -1,0 +1,23 @@
+{
+    "versioning_enabled": true,
+    "whisper_executable": "C:/Ducklord/Whisper-Faster_r128/Whisper-Faster/whisper-faster.exe",
+    "language": "en",
+    "model": "medium",
+    "translation_enabled": false,
+    "command_mode": true,
+    "timestamps_disabled": true,
+    "clear_text_output": true,
+    "selected_audio_device_index": 16,
+    "export_folder": "E:/02_Projects/Code/GitHub/Whisperer-Gemini-2.5 - Refactor - LMStudio/TestTemp",
+    "silence_threshold_seconds": 1.0,
+    "vad_energy_threshold": 40,
+    "clear_audio_on_exit": true,
+    "clear_text_on_exit": true,
+    "logging_level": "Everything",
+    "log_to_file": false,
+    "beep_on_transcription": true,
+    "auto_paste": true,
+    "auto_paste_delay": 0.5,
+    "backup_folder": "OldVersions",
+    "max_backups": 5
+}

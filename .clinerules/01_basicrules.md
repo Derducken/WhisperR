@@ -1,0 +1,18 @@
+- Always test the project at the end to ensure it doesn't contain errors.
+- Don't create placeholder code unless planning to expand on it later.
+- Code from A to Z rather than just small parts that don't fulfill the user's needs.
+- Keep project files between 300-500 lines where possible.
+- Don't duplicate code; build upon existing implementations.
+- Make sure any code you write:
+  - Is optimized AND concise as much as possible. For example, move common functionality from two or more functions into one mega-function to reduce the amount of redundant code, or create helper functions.
+  - Is understandable, uses rational naming, and includes comments, so that even a non-programmer will be able to read and understand it.
+  - Takes advantage of multi-threaded processors, GPU acceleration, etc., where applicable.
+  - Is 100% safe to use and run - as in, it shouldn't accidentally start deleting all the user's or the OS's files, won't act as a backdoor, won't "leak data online", etc.
+- When making GUIs, make them both functional and pretty. Add tooltips to all elements explaining to the user "what they're about".
+- Whenever you're ready to write or tweak some code, ask yourself one more time: is there a better way to produce an even more optimized, performant, and secure result? Go over your code and consider ways to improve it further before actually including it in a project.
+- Check if there's a problems-and-solutions.md file in the project's folder.
+  - If there is, refer to it whenever you write or modify any code to ensure you don't make the same mistake twice.
+  - If the file doesn't exist, create it from scratch.
+  - Whenever you meet a problem or make an error in this project, and then you find the solution, log both the problem and its solution into that file for future reference, to ensure you won't forget about it and make the same mistake twice. Use markdown-friendly syntax.
+  - You SHOULDN'T create entries for issues you haven't fixed yet OR ensured that their solution worked.
+- Consider the project.md and problems-and-solutions.md files as a reference you're creating for a future amnesiac you, so that this amnesiac future you could use them as your reference if you had to start working on the project again from scratch after having forgotten everything about it.

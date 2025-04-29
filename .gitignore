@@ -1,0 +1,69 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec
+
+# Node modules
+node_modules/
+
+# Build outputs
+*.exe
+*.msi
+*.pyd
+*.pyz
+*.pkg
+*.dll
+*.zip
+*.7z
+
+# Old versions
+OldVersions/
+OldVersionsOLD/
+
+# Temp files
+TestTemp/
+*.bak
+*.tmp
+*.temp
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# System files
+.DS_Store
+Thumbs.db
