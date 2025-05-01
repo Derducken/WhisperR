@@ -452,7 +452,7 @@ class VoiceControlApp:
             hwnd = win32gui.CreateWindowEx(win32con.WS_EX_TOPMOST | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_LAYERED | win32con.WS_EX_TOOLWINDOW,
                                           "Static", None, win32con.WS_VISIBLE | win32con.WS_POPUP, 0, 0, screen_width, 5, 0, 0, 0, None)
             win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) | win32con.WS_EX_LAYERED)
-            win32gui.SetLayeredWindowAttributes(hwnd, win32api.RGB(0,0,0), int(0.5 * 255), win32con.LWA_ALPHA)
+            win32gui.SetLayeredWindowAttributes(hwnd, win32api.RGB(0,0,0), int(0.25 * 255), win32con.LWA_ALPHA)
             hdc = win32gui.GetDC(hwnd)
             brush = win32gui.CreateSolidBrush(win32api.RGB(0, 150, 0))
             rect = win32gui.GetClientRect(hwnd)
