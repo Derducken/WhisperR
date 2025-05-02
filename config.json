@@ -1,6 +1,6 @@
 {
-    "versioning_enabled": true,
-    "whisper_executable": "whisper-faster.exe",
+    "versioning_enabled": false,
+    "whisper_executable": "C:/Ducklord/Faster-Whisper-XXL/Faster-Whisper-XXL/faster-whisper-xxl.exe",
     "language": "en",
     "model": "large",
     "translation_enabled": false,
@@ -8,16 +8,19 @@
     "timestamps_disabled": true,
     "clear_text_output": true,
     "selected_audio_device_index": 16,
-    "export_folder": "TestTemp",
+    "export_folder": "E:/02_Projects/Code/GitHub/WhisperR/TestTemp",
     "silence_threshold_seconds": 1.0,
     "vad_energy_threshold": 40,
     "clear_audio_on_exit": true,
     "clear_text_on_exit": true,
-    "logging_level": "Everything",
+    "logging_level": "Extended",
     "log_to_file": false,
     "beep_on_transcription": true,
     "auto_paste": true,
     "auto_paste_delay": 0.5,
     "backup_folder": "OldVersions",
-    "max_backups": 5
+    "max_backups": 5,
+    "close_behavior": "Minimize to tray",
+    "hotkey_toggle_record": "ctrl+alt+space",
+    "hotkey_show_window": "ctrl+alt+shift+space"
 }
