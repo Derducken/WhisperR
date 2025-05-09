@@ -21,7 +21,7 @@ import time
 import numpy as np
 import re
 import json
-from collections import deque
+from collections import deque # deque is no longer used for audio_buffer
 import queue
 import winsound
 
@@ -62,6 +62,7 @@ class WhisperRApp:
         self.logging_level = "Everything"  # None, Essential, Extended, Everything
         self.log_to_file = False
         self.beep_on_transcription = False
+        self.beep_on_save_audio_segment = False # <<< NEW SETTING
         self.auto_paste = False
         self.auto_paste_delay = 1.0
         self.backup_folder = "OldVersions"
@@ -72,7 +73,7 @@ class WhisperRApp:
 
         # --- Runtime State ---
         self.recording = False
-        self.audio_buffer = deque()
+        # self.audio_buffer = deque() # ***FIX: Removed unused audio_buffer***
         self.current_segment = []
         self.is_speaking = False
         self.silence_start_time = None
@@ -212,6 +213,7 @@ class WhisperRApp:
                     self.logging_level = settings.get('logging_level', 'Everything')
                     self.log_to_file = settings.get('log_to_file', False)
                     self.beep_on_transcription = settings.get('beep_on_transcription', False)
+                    self.beep_on_save_audio_segment = settings.get('beep_on_save_audio_segment', False) # <<< NEW
                     self.auto_paste = settings.get('auto_paste', False)
                     self.auto_paste_delay = float(settings.get('auto_paste_delay', 1.0))
                     self.backup_folder = settings.get('backup_folder', 'OldVersions')
@@ -282,6 +284,7 @@ class WhisperRApp:
             'logging_level': getattr(self, 'logging_level', 'Everything'),
             'log_to_file': getattr(self, 'log_to_file', False),
             'beep_on_transcription': getattr(self, 'beep_on_transcription', False),
+            'beep_on_save_audio_segment': getattr(self, 'beep_on_save_audio_segment', False), # <<< NEW
             'auto_paste': getattr(self, 'auto_paste', False),
             'auto_paste_delay': getattr(self, 'auto_paste_delay', 1.0),
             'backup_folder': getattr(self, 'backup_folder', 'OldVersions'),
@@ -488,7 +491,7 @@ class WhisperRApp:
 
     def update_command_mode(self, *args):
         self.command_mode = self.command_mode_var.get()
-        self.vad_enabled = self.command_mode
+        self.vad_enabled = self.command_mode # vad_enabled mirrors command_mode
         self.log_message("essential", f"Command mode / VAD enabled: {self.command_mode}")
         self.save_settings()
 
@@ -770,13 +773,11 @@ class WhisperRApp:
             self.root.after(0, self.start_recording)
 
     def start_recording(self):
-        # ... (remains the same) ...
         if self.recording:
             return
         self.log_message("essential", "Starting recording...")
-        # Check for device readiness? Maybe too complex here.
         self.recording = True
-        self.audio_buffer = deque()
+        # self.audio_buffer = deque() # ***FIX: Removed unused audio_buffer***
         self.current_segment = []
         self.is_speaking = False
         self.silence_start_time = None
@@ -790,25 +791,27 @@ class WhisperRApp:
         self.root.after(0, self.update_recording_indicator)
 
     def stop_recording(self):
-        # ... (remains the same) ...
         if not self.recording:
             return
         self.log_message("essential", "Manual stop recording requested...")
-        self.recording = False
+        self.recording = False # This will signal the recording_thread to stop its loop
         self.root.after(0, self.destroy_green_line)
 
-        if self.audio_buffer or self.current_segment:
+        # ***FIX: Changed condition from `self.audio_buffer or self.current_segment` to just `self.current_segment` ***
+        if self.current_segment:
             self.log_message("extended", "Processing final audio buffer on manual stop...")
-            final_segment_data = list(self.current_segment)
-            self.current_segment = final_segment_data # Ensure save_segment gets this
+            # self.current_segment already holds the data, no need to copy to final_segment_data here.
+            # save_segment_and_reset_vad will handle self.current_segment
             self.root.after(0, self.save_segment_and_reset_vad)
         else:
-            self.log_message("extended", "No audio in buffer/segment to save on manual stop.")
-            self.current_segment = []
+            self.log_message("extended", "No audio in current_segment to save on manual stop.")
+            # Ensure VAD state is clean even if no audio was captured.
+            # start_recording also resets these, but good for explicit cleanup.
+            self.current_segment = [] # Should be empty already
             self.is_speaking = False
             self.silence_start_time = None
 
-        self.audio_buffer = deque()
+        # self.audio_buffer = deque() # ***FIX: Removed unused audio_buffer***
         self.log_message("essential", f"Recording stopped. Transcription queue size: {self.transcription_queue.qsize()}")
         self.root.after(0, self.update_recording_indicator)
 
@@ -831,62 +834,76 @@ class WhisperRApp:
         samplerate = 44100
         channels = 1
         dtype = 'int16'
-        blocksize = 1024
+        blocksize = 1024 # Number of frames per callback
         device_index = getattr(self, 'selected_audio_device_index', None)
+
+        # VAD specific parameters (only used if self.command_mode is True)
         silence_duration = getattr(self, 'silence_threshold_seconds', 5.0)
         energy_threshold = getattr(self, 'vad_energy_threshold', 300)
-        vad_buffer_limit = int(samplerate * 60 / blocksize) # 60s limit
+
+        # ***FIX: Renamed vad_buffer_limit to vad_mode_max_segment_chunks for clarity***
+        # Max chunks for a single segment *only when VAD mode is active*.
+        # Prevents overly long segments if silence detection is problematic or speech is continuous.
+        # Approx 60 seconds: (samplerate frames/sec * 60 seconds) / (blocksize frames/chunk) = chunks
+        vad_mode_max_segment_chunks = int(samplerate * 60 / blocksize)
 
         def audio_callback(indata, frames, time_info, status):
             if status:
                 # Avoid logging directly from callback if causing issues
                 # Consider queueing log messages for main thread if problems arise
                 print(f"Audio CB Status: {status}") # Use print as fallback log
+
+            # This check is crucial. If recording is stopped, do nothing further.
             if not self.recording:
                 return
 
             current_time_monotonic = time.monotonic()
             data_copy = indata.copy()
-            self.current_segment.append(data_copy)
+            self.current_segment.append(data_copy) # Always append incoming audio data
 
-            if self.command_mode:
+            # --- VAD Logic (Auto-Pause / Commands mode) ---
+            if self.command_mode: # self.command_mode is True when "Enable Auto-Pause / Commands" is checked
                 rms = np.sqrt(np.mean(data_copy.astype(np.float32)**2))
                 is_currently_loud = rms >= energy_threshold
 
-                # --- VAD Logging (Conditional) ---
                 if self.logging_level == "Everything":
                     silence_status = "Silence Detected" if self.silence_start_time else "No Silence"
                     speaking_status = "Speaking" if self.is_speaking else "Not Speaking"
                     log_msg = f"RMS: {rms:.2f} (Thresh: {energy_threshold}) | Loud: {is_currently_loud} | State: {speaking_status} | {silence_status}"
-                    # Avoid calling full log_message from callback; use print or schedule
                     print(f"[VAD DEBUG] {log_msg}")
 
                 if is_currently_loud:
                     if not self.is_speaking:
                         if self.logging_level == "Everything": print("[VAD DEBUG] Speech started.")
                         self.is_speaking = True
-                    self.silence_start_time = None
-                elif self.is_speaking:
+                    self.silence_start_time = None # Reset silence timer if speech is detected
+                elif self.is_speaking: # Was speaking, but current chunk is not loud
                     if self.silence_start_time is None:
                         if self.logging_level == "Everything": print("[VAD DEBUG] Silence started...")
                         self.silence_start_time = current_time_monotonic
 
+                    # Check if silence duration has been met
                     if current_time_monotonic - self.silence_start_time >= silence_duration:
                         if self.logging_level == "Everything": print(f"[VAD DEBUG] Silence threshold ({silence_duration}s) reached.")
-                        if self.recording:
+                        if self.recording: # Ensure still in recording state before scheduling save
                             self.root.after(0, self.save_segment_and_reset_vad)
-                            self.is_speaking = False
-                            self.silence_start_time = None
+                            # VAD state (is_speaking, silence_start_time) is reset by save_segment_and_reset_vad
 
-            if len(self.current_segment) > vad_buffer_limit:
-                self.log_message("essential", f"Segment limit reached, saving.")
-                if self.recording:
-                    self.root.after(0, self.save_segment_and_reset_vad)
-                    self.is_speaking = False
-                    self.silence_start_time = None
+                # ***FIX: Moved max segment length check INSIDE the `if self.command_mode:` block***
+                # This check is now specific to VAD mode.
+                if len(self.current_segment) > vad_mode_max_segment_chunks:
+                    actual_duration_s = len(self.current_segment) * blocksize / samplerate
+                    self.log_message("essential", f"VAD mode segment limit triggered (current segment approx {actual_duration_s:.1f}s), saving.")
+                    if self.recording: # Ensure still in recording state
+                        self.root.after(0, self.save_segment_and_reset_vad)
+                        # VAD state also reset by save_segment_and_reset_vad
+
+            # else: (self.command_mode is False)
+            #   In "record forever" mode, self.current_segment just keeps accumulating.
+            #   No automatic saving based on silence or segment length occurs here.
+            #   The entire recording will be saved only when self.stop_recording() is manually called.
 
         # --- Stream setup and loop ---
-        # ... (remains the same) ...
         self.audio_stream = None
         try:
             self.log_message("extended", f"Opening InputStream (Continuous) device: {device_index}, blocksize: {blocksize}")
@@ -901,18 +918,21 @@ class WhisperRApp:
             self.log_message("extended", "Starting audio stream...")
             self.audio_stream.start()
             self.log_message("essential", "Audio stream started.")
+
+            # Main loop for the recording thread. Keeps running as long as self.recording is True.
+            # The audio_callback handles data processing.
             while self.recording:
-                time.sleep(0.1)
+                time.sleep(0.1) # Keep thread alive, check self.recording periodically
 
         except sd.PortAudioError as pae:
             self.log_message("essential", f"PortAudioError in recording thread: {pae}")
             self.root.after(0, lambda: messagebox.showerror("Audio Error", f"Failed to open audio device: {pae}\n\nPlease check the selected device in Configuration."))
-            self.root.after(0, self.handle_recording_error)
+            self.root.after(0, self.handle_recording_error) # This will set self.recording = False
         except Exception as e:
             self.log_message("essential", f"Unexpected error in continuous recording thread: {e}")
             import traceback
             self.log_message("essential", traceback.format_exc())
-            self.root.after(0, self.handle_recording_error)
+            self.root.after(0, self.handle_recording_error) # This will set self.recording = False
         finally:
             if self.audio_stream:
                 try:
@@ -922,23 +942,32 @@ class WhisperRApp:
                         self.audio_stream.close()
                 except Exception as e_close:
                     self.log_message("essential", f"Error closing audio stream: {e_close}")
-            self.log_message("essential", "Continuous audio recording thread finished.")
+
+            self.log_message("essential", f"Continuous audio recording thread finished (self.recording is now {self.recording}).")
+
+            # If the thread exited for some reason while self.recording was still True
+            # (e.g., an unhandled exception in the while loop or stream closed unexpectedly),
+            # ensure the application's recording state is correctly updated.
             if self.recording:
-                 self.root.after(0, self.stop_recording)
+                 self.log_message("extended","Recording thread finished, but self.recording was still True. Forcing stop_recording.")
+                 self.root.after(0, self.stop_recording) # This will set self.recording = False and process any final segment
 
 
     def save_segment_and_reset_vad(self):
-        # ... (remains the same) ...
         if not self.current_segment:
             self.log_message("extended", "Save segment called but no segment data.")
             return
 
-        segment_to_save = list(self.current_segment)
-        self.current_segment = []
+        segment_to_save = list(self.current_segment) # Make a copy of the list of audio chunks
+        self.current_segment = [] # Reset for the next segment or for a clean state
+
+        # Reset VAD state variables. This is crucial for VAD mode.
+        # For "record forever" mode, these are reset by start_recording if a new recording begins.
+        # This ensures they are clean after any segment save.
         self.is_speaking = False
         self.silence_start_time = None
 
-        self.save_segment(segment_to_save)
+        self.save_segment(segment_to_save) # segment_to_save is a list of numpy arrays
 
 
     def save_segment(self, segment_data):
@@ -977,6 +1006,15 @@ class WhisperRApp:
                 wf.writeframes(audio_array.tobytes())
 
             self.log_message("essential", f"Segment saved to {filepath}")
+
+            # <<< PLAY BEEP IF ENABLED FOR SEGMENT SAVE >>>
+            if self.beep_on_save_audio_segment:
+                # Ensure play_beep is called from the main thread if save_segment can be called from other threads.
+                # Currently, save_segment (via save_segment_and_reset_vad) is scheduled with self.root.after(0, ...),
+                # so it runs on the main thread, making this direct call safe.
+                self.play_beep()
+            # <<< END BEEP LOGIC >>>
+
             self.transcription_queue.put(filepath)
             self.root.after(0, self.update_queue_indicator)
 
@@ -1063,8 +1101,8 @@ class WhisperRApp:
     def handle_recording_error(self):
         # ... (remains the same) ...
         self.log_message("essential", "Handling recording error state.")
-        if self.recording:
-            self.recording = False
+        if self.recording: # If it was recording, stop it
+            self.recording = False # This signals the recording thread to stop
             self.root.after(0, self.destroy_green_line)
             self.root.after(0, self.update_recording_indicator)
         if self.audio_stream and not self.audio_stream.closed:
@@ -1149,7 +1187,7 @@ class WhisperRApp:
                     delay_ms = int(max(0, self.auto_paste_delay) * 1000) # Ensure non-negative delay
                     self.root.after(delay_ms, self.perform_auto_paste)
 
-                if command_mode:
+                if command_mode: # Use the current command_mode setting for this transcribed segment
                     self.log_message("extended", f"Processing commands with transcription: '{parsed_text}'")
                     current_commands_snapshot = list(self.loaded_commands) # Take snapshot
                     self.root.after(0, self.execute_command_from_text, parsed_text, current_commands_snapshot)
@@ -1488,7 +1526,7 @@ class WhisperRApp:
         self.config_window = tk.Toplevel(self.root)
         self.config_window.title("WhisperR Configuration")
         # Increased height slightly more for hotkeys
-        self.config_window.geometry("450x940")
+        self.config_window.geometry("450x960") # Adjusted height for new checkbox
         self.config_window.transient(self.root)
         self.config_window.grab_set()
 
@@ -1617,6 +1655,12 @@ class WhisperRApp:
         transcription_frame.pack(**frame_options)
         trans_inner_frame = tk.Frame(transcription_frame)
         trans_inner_frame.pack(fill=tk.X, expand=True, padx=5, pady=5)
+
+        # <<< START NEW CHECKBOX >>>
+        self.beep_on_save_audio_segment_var = tk.BooleanVar(value=self.beep_on_save_audio_segment)
+        ttk.Checkbutton(trans_inner_frame, text="Beep on Audio Segment Save (when .wav is created)", variable=self.beep_on_save_audio_segment_var).pack(anchor=tk.W)
+        # <<< END NEW CHECKBOX >>>
+
         self.beep_on_transcription_var = tk.BooleanVar(value=self.beep_on_transcription)
         ttk.Checkbutton(trans_inner_frame, text="Beep on Transcription Completion", variable=self.beep_on_transcription_var).pack(anchor=tk.W)
         # Auto-Paste frame
@@ -1765,6 +1809,11 @@ class WhisperRApp:
             config_changed = True # May need to open/close file
 
         # Transcription
+        new_beep_on_save = self.beep_on_save_audio_segment_var.get() # <<< NEW
+        if new_beep_on_save != self.beep_on_save_audio_segment:      # <<< NEW
+            self.beep_on_save_audio_segment = new_beep_on_save       # <<< NEW
+            config_changed = True                                     # <<< NEW
+
         new_beep = self.beep_on_transcription_var.get()
         if new_beep != self.beep_on_transcription: self.beep_on_transcription = new_beep; config_changed = True
         new_auto_paste = self.auto_paste_var.get()
