@@ -1,5 +1,7 @@
 node_modules
 OldVersions
+__pycache__
+TestTemp
 dist
 build
 prompt.json

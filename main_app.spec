@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['WhisperR.py'],
+    ['main_app.py'],
     pathex=[],
     binaries=[],
     datas=[('WhisperR_icon.png', '.')],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='WhisperR',
+    name='main_app',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
