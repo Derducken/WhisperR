@@ -9,3 +9,4 @@ config.json
 compile-to-exe.bat
 commands.json
 icon.png
+.gitignore
