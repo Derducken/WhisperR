@@ -10,6 +10,7 @@ LOG_FILE_PREFIX = "whisperr_log_"
 # --- Default Hotkeys ---
 DEFAULT_HOTKEY_TOGGLE = "ctrl+alt+space"
 DEFAULT_HOTKEY_SHOW = "ctrl+alt+shift+space"
+DEFAULT_HOTKEY_PUSH_TO_TALK = "" # Default to empty, user must set
 
 # --- Status Bar ---
 DEFAULT_STATUS_BAR_POSITION = "Top"

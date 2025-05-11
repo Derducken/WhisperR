@@ -23,7 +23,7 @@ from constants import (
     DEFAULT_THEME, UI_THEMES,
     ALT_INDICATOR_POSITIONS, DEFAULT_ALT_INDICATOR_POSITION,
     DEFAULT_ALT_INDICATOR_SIZE, DEFAULT_ALT_INDICATOR_OFFSET,
-    DEFAULT_MAX_LOG_FILES, DEFAULT_AUTO_ADD_SPACE # Added imports
+    DEFAULT_MAX_LOG_FILES, DEFAULT_AUTO_ADD_SPACE, DEFAULT_HOTKEY_PUSH_TO_TALK
 )
 
 
@@ -111,6 +111,7 @@ class AppSettings:
     # Hotkeys
     hotkey_toggle_record: str = DEFAULT_HOTKEY_TOGGLE
     hotkey_show_window: str = DEFAULT_HOTKEY_SHOW
+    hotkey_push_to_talk: str = DEFAULT_HOTKEY_PUSH_TO_TALK
 
     # Audio & VAD
     selected_audio_device_index: int | None = None
