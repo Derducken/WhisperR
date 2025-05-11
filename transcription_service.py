@@ -8,10 +8,11 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional, Callable, List, Dict, Any, Tuple # <--- ENSURE Tuple IS HERE
-from app_logger import get_logger, log_essential, log_error, log_extended, log_debug, log_warning 
-from constants import AUDIO_QUEUE_SENTINEL, WHISPER_ENGINES
+from app_logger import get_logger, log_essential, log_error, log_extended, log_debug, log_warning
+# WHISPER_ENGINES will likely be simplified or removed from constants later
+from constants import AUDIO_QUEUE_SENTINEL, WHISPER_ENGINES 
 from settings_manager import AppSettings, CommandEntry # For type hinting
-from whisper_lib_integration import FasterWhisperLib, FASTER_WHISPER_AVAILABLE
+# from whisper_lib_integration import FasterWhisperLib, FASTER_WHISPER_AVAILABLE # REMOVE
 
 class TranscriptionService:
     def __init__(self, settings_ref: AppSettings, root_tk_instance: tk.Tk, settings_manager=None):
@@ -35,10 +36,10 @@ class TranscriptionService:
         # Command execution related
         self.commands_list: List[CommandEntry] = [] # To be updated by main app
 
-        # Whisper lib integration
-        self.faster_whisper_instance: Optional[FasterWhisperLib] = None
-        if FASTER_WHISPER_AVAILABLE:
-            self.faster_whisper_instance = FasterWhisperLib(self.settings)
+        # Whisper lib integration - REMOVED
+        # self.faster_whisper_instance: Optional[FasterWhisperLib] = None
+        # if FASTER_WHISPER_AVAILABLE:
+        #     self.faster_whisper_instance = FasterWhisperLib(self.settings)
 
     def set_callbacks(self, on_transcription_complete, on_transcription_error,
                       on_queue_updated, on_transcribing_status_changed):
@@ -124,26 +125,33 @@ class TranscriptionService:
 
 
     def _transcription_worker_loop(self):
-        is_fw_model_loaded = False
-        if self.settings.whisper_engine_type == WHISPER_ENGINES[1] and self.faster_whisper_instance:
-            is_fw_model_loaded = self.faster_whisper_instance.load_model() # Pre-load model
-            if not is_fw_model_loaded:
-                 log_error("Failed to pre-load faster-whisper model. Transcription with library may fail.")
-                 # Optionally switch to CLI mode here if desired as a fallback,
-                 # or let it try to load again per file.
+        # is_fw_model_loaded = False # REMOVED
+        # if self.settings.whisper_engine_type == WHISPER_ENGINES[1] and self.faster_whisper_instance: # REMOVED
+            # is_fw_model_loaded = self.faster_whisper_instance.load_model() # Pre-load model # REMOVED
+            # if not is_fw_model_loaded: # REMOVED
+                 # log_error("Failed to pre-load faster-whisper model. Transcription with library may fail.") # REMOVED
+                 # Optionally switch to CLI mode here if desired as a fallback, # REMOVED
+                 # or let it try to load again per file. # REMOVED
+        log_debug("Transcription worker loop started (CLI-only mode).")
 
         while not self._stop_worker_event.is_set():
             try:
-                while self.is_queue_processing_paused and not self._stop_worker_event.is_set():
-                    if self._is_transcribing_for_ui: self._notify_transcribing_status(False)
-                    time.sleep(0.2) # Check pause/stop flags periodically
-                    if self._stop_worker_event.is_set(): break
-                
-                if self._stop_worker_event.is_set(): break
+                if self.is_queue_processing_paused:
+                    if self._is_transcribing_for_ui: # Ensure status is updated if paused mid-transcription
+                        self._notify_transcribing_status(False)
+                    log_debug("Transcription worker: Queue processing is paused. Sleeping...")
+                    time.sleep(0.5) # Sleep a bit longer when paused
+                    continue # Loop back to check pause/stop flags
 
+                if self._stop_worker_event.is_set():
+                    log_debug("Transcription worker: Stop event detected before getting from queue.")
+                    break
+
+                log_debug("Transcription worker: Attempting to get from queue...")
                 try:
                     audio_filepath_str = self.transcription_queue.get(timeout=0.5) # Timeout to check stop_event
                 except queue.Empty:
+                    # log_debug("Transcription worker: Queue empty.") # Can be noisy
                     if self._is_transcribing_for_ui: self._notify_transcribing_status(False)
                     continue # Loop back to check pause/stop flags
 
@@ -172,25 +180,19 @@ class TranscriptionService:
                 transcribed_text = None
                 error_msg = None
 
-                if self.settings.whisper_engine_type == WHISPER_ENGINES[1] and self.faster_whisper_instance: # "FasterWhisperLib"
-                    # Force reload model to ensure latest settings are used
-                    self.faster_whisper_instance.unload_model()
-                    is_fw_model_loaded = self.faster_whisper_instance.load_model()
-                    
-                    if is_fw_model_loaded:
-                        transcribed_text, error_msg = self.faster_whisper_instance.transcribe_audio_file(str(audio_filepath))
-                    else:
-                        error_msg = "Faster-whisper model could not be loaded. Check logs."
-                        log_error(error_msg)
-                        # Fall back to CLI if library fails
-                        transcribed_text, error_msg = self._transcribe_with_cli(audio_filepath)
-                
-                else: # Default to "Executable"
-                    transcribed_text, error_msg = self._transcribe_with_cli(audio_filepath)
+                # Always use CLI method now
+                log_debug(f"Processing {audio_filepath.name} with CLI method.")
+                transcribed_text, error_msg = self._transcribe_with_cli(audio_filepath)
 
                 # Post-transcription
                 if transcribed_text is not None: # Success
                     parsed_text = self._parse_and_clean_transcription_text(transcribed_text)
+                    
+                    # Auto-add space if enabled and text exists and doesn't already end with a space
+                    if self.settings_manager.settings.auto_add_space and parsed_text and not parsed_text.endswith(' '):
+                        parsed_text += ' '
+                        log_debug("Auto-added space to transcription.")
+
                     if self.on_transcription_complete:
                         self.root.after(0, self.on_transcription_complete, parsed_text, audio_filepath)
                     
@@ -228,14 +230,15 @@ class TranscriptionService:
 
     def _transcribe_with_cli(self, audio_path: Path) -> Tuple[Optional[str], Optional[str]]:
         """Returns (transcribed_text, error_message)"""
-        whisper_exec = Path(self.settings.whisper_executable)
+        current_settings = self.settings_manager.settings
+        whisper_exec = Path(current_settings.whisper_executable)
         if not whisper_exec.exists() or not whisper_exec.is_file():
             msg = f"Whisper executable not found or is not a file: {whisper_exec}"
             log_error(msg)
             self.root.after(0, lambda: messagebox.showerror("Whisper CLI Error", msg, parent=self.root))
             return None, msg
 
-        export_dir = Path(self.settings.export_folder)
+        export_dir = Path(current_settings.export_folder) # Use current_settings
         export_dir.mkdir(parents=True, exist_ok=True)
 
         # Output filename for .txt (Whisper CLI creates this)
@@ -246,8 +249,8 @@ class TranscriptionService:
         command = [
             str(whisper_exec),
             str(audio_path),
-            "--model", self.settings.model,
-            "--language", self.settings.language,
+            "--model", current_settings.model,
+            "--language", current_settings.language,
             "--output_format", "txt", # We only care about the text for this method
             "--output_dir", str(export_dir)
         ]
@@ -263,9 +266,9 @@ class TranscriptionService:
                 command.extend(["--initial_prompt", prompt_content])
 
 
-        command.extend(["--task", "translate" if self.settings.translation_enabled else "transcribe"])
+        command.extend(["--task", "translate" if current_settings.translation_enabled else "transcribe"])
 
-        if not self.settings.whisper_cli_beeps_enabled:
+        if not current_settings.whisper_cli_beeps_enabled:
             command.append("--beep_off")
         
         # Add any other CLI flags based on self.settings as needed
@@ -321,9 +324,9 @@ class TranscriptionService:
     def _parse_and_clean_transcription_text(self, raw_text: str) -> str:
         """Cleans transcription text based on settings (timestamps, etc.)."""
         if not raw_text: return ""
-        
+        current_settings = self.settings_manager.settings
         # If no cleaning options are enabled, return text as is (after stripping)
-        if not self.settings.clear_text_output and not self.settings.timestamps_disabled:
+        if not current_settings.clear_text_output and not current_settings.timestamps_disabled:
             return raw_text.strip()
 
         import re # Keep import local if only used here
@@ -341,7 +344,7 @@ class TranscriptionService:
                 continue
 
             # Option to clear metadata like "---" or "===" or date lines sometimes added by tools
-            if self.settings.clear_text_output:
+            if current_settings.clear_text_output:
                 if line_stripped.startswith("---") or \
                    line_stripped.startswith("===") or \
                    re.match(r'^\d{4}-\d{2}-\d{2}', line_stripped): # Matches YYYY-MM-DD
@@ -349,7 +352,7 @@ class TranscriptionService:
             
             match = ts_pattern_general.match(line_stripped)
             if match:
-                if self.settings.timestamps_disabled: # Remove timestamp prefix entirely
+                if current_settings.timestamps_disabled: # Remove timestamp prefix entirely
                     text_part = line_stripped[match.end():].strip()
                     if text_part: # Only add if there's actual text after timestamp
                         cleaned_lines.append(text_part)

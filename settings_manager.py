@@ -3,6 +3,7 @@ import os
 import shutil
 import datetime
 import sys
+import platform # For OS-specific paths
 from pathlib import Path
 from dataclasses import dataclass, field, asdict, fields, is_dataclass
 from typing import List, Dict, Any, TypeVar, Type
@@ -17,15 +18,39 @@ from constants import (
     DEFAULT_SILENCE_THRESHOLD_SECONDS, DEFAULT_VAD_ENERGY_THRESHOLD, DEFAULT_EXPORT_FOLDER,
     DEFAULT_BACKUP_FOLDER, DEFAULT_MAX_BACKUPS, CloseBehavior, DEFAULT_CLOSE_BEHAVIOR,
     LOG_LEVELS, DEFAULT_LOGGING_LEVEL, DEFAULT_WHISPER_ENGINE, WHISPER_ENGINES,
-    DEFAULT_FW_MODEL, DEFAULT_AUDIO_FORMAT, AUDIO_FORMATS,
+    DEFAULT_AUDIO_FORMAT, AUDIO_FORMATS,
     DEFAULT_MAX_MEMORY_SEGMENT_DURATION_SECONDS,
     DEFAULT_THEME, UI_THEMES,
     ALT_INDICATOR_POSITIONS, DEFAULT_ALT_INDICATOR_POSITION,
-    DEFAULT_ALT_INDICATOR_SIZE, DEFAULT_ALT_INDICATOR_OFFSET
+    DEFAULT_ALT_INDICATOR_SIZE, DEFAULT_ALT_INDICATOR_OFFSET,
+    DEFAULT_MAX_LOG_FILES, DEFAULT_AUTO_ADD_SPACE # Added imports
 )
 
 
 T = TypeVar('T')
+
+def get_user_config_dir(app_name: str = "WhisperR") -> Path:
+    """Returns a user-specific directory for application configuration files."""
+    if platform.system() == "Windows":
+        # APPDATA is typically C:\Users\<username>\AppData\Roaming
+        path = Path(os.getenv('APPDATA', Path.home() / "AppData" / "Roaming")) / app_name
+    elif platform.system() == "Darwin": # macOS
+        path = Path.home() / "Library" / "Application Support" / app_name
+    else: # Linux and other XDG-based systems
+        path = Path(os.getenv('XDG_CONFIG_HOME', Path.home() / ".config")) / app_name
+    
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log_error(f"Could not create user config directory {path}: {e}. Falling back to local directory.")
+        # Fallback to a directory in the same location as the executable or script (less ideal for persistence)
+        if hasattr(sys, '_MEIPASS'):
+            path = Path(sys._MEIPASS) / app_name # For PyInstaller bundle
+            path.mkdir(parents=True, exist_ok=True) # Try again in MEIPASS
+        else:
+            path = Path(".") / app_name # For development, relative to script
+            path.mkdir(parents=True, exist_ok=True) # Try again locally
+    return path
 
 def _ensure_type(value: Any, target_type: Type[T], default_value: T) -> T:
     """Helper to ensure value is of target_type, with robust conversion for common cases."""
@@ -113,11 +138,16 @@ class AppSettings:
     alt_status_indicator_offset: int = DEFAULT_ALT_INDICATOR_OFFSET
 
     # Whisper Engine Choice
-    whisper_engine_type: str = DEFAULT_WHISPER_ENGINE
-    faster_whisper_model_name: str = DEFAULT_FW_MODEL
+    whisper_engine_type: str = DEFAULT_WHISPER_ENGINE # Will always be "Executable"
 
     # Scratchpad
     scratchpad_append_mode: bool = False
+
+    # Log Management
+    max_log_files: int = DEFAULT_MAX_LOG_FILES
+
+    # Transcription Behavior
+    auto_add_space: bool = DEFAULT_AUTO_ADD_SPACE
 
 
     @classmethod
@@ -141,8 +171,8 @@ class AppSettings:
 
 
 class SettingsManager:
-    def __init__(self, base_path: Path):
-        self.base_path = base_path
+    def __init__(self, config_base_path: Path): # Changed base_path to config_base_path
+        self.base_path = config_base_path # This is now the user-specific config dir
         self.base_path.mkdir(parents=True, exist_ok=True)
 
         self.config_file = self.base_path / CONFIG_FILE_NAME
@@ -171,7 +201,7 @@ class SettingsManager:
                 log_error(f"Error loading {file_path}: {e}. Using defaults/empty.")
         else:
             # Use the imported helper function correctly
-            log_essential(f"{file_path.name} not found, using defaults/empty.")
+            log_essential(f"{file_path.name} not found at {file_path}, using defaults/empty.") # Log full path
         return default_content
 
     def _save_json_file(self, data: Any, file_path: Path, perform_backup: bool = True):
@@ -181,7 +211,7 @@ class SettingsManager:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)
             # Use the imported helper function correctly
-            log_essential(f"Saved data to {file_path.name}")
+            log_essential(f"Saved data to {file_path}") # Log full path
         except Exception as e:
             # Use the imported helper function correctly
             log_error(f"Error saving {file_path.name}: {e}")
@@ -194,9 +224,45 @@ class SettingsManager:
 
 
     def save_settings(self):
-        self.settings.whisper_executable = str(Path(self.settings.whisper_executable).resolve()) if self.settings.whisper_executable else DEFAULT_WHISPER_EXECUTABLE
-        self.settings.export_folder = str(Path(self.settings.export_folder).resolve()) if self.settings.export_folder else DEFAULT_EXPORT_FOLDER
-        self.settings.backup_folder = str(Path(self.settings.backup_folder).resolve()) if self.settings.backup_folder else DEFAULT_BACKUP_FOLDER
+        # Resolve paths relative to a user-writable directory if they are not absolute
+        # For export_folder and backup_folder, if they are relative, they should be relative to user documents or similar
+        # For whisper_executable, it's usually a system path or a path provided by user.
+        
+        # Ensure whisper_executable is an absolute path or a command findable in PATH
+        if self.settings.whisper_executable and not Path(self.settings.whisper_executable).is_absolute():
+            # If it's just a name like "whisper", assume it's in PATH. Otherwise, it might be problematic.
+            # No change needed here if it's just a name. Path.resolve() might fail if not in CWD.
+            pass
+        elif self.settings.whisper_executable:
+             self.settings.whisper_executable = str(Path(self.settings.whisper_executable).resolve())
+        else:
+            self.settings.whisper_executable = DEFAULT_WHISPER_EXECUTABLE
+
+        # For export and backup folders, ensure they are absolute or make them relative to user config dir
+        # This behavior might need refinement based on desired UX (e.g. always user documents for export)
+        for folder_attr in ['export_folder', 'backup_folder']:
+            folder_val = getattr(self.settings, folder_attr)
+            default_folder_val = DEFAULT_EXPORT_FOLDER if folder_attr == 'export_folder' else DEFAULT_BACKUP_FOLDER
+            
+            if folder_val:
+                path_obj = Path(folder_val)
+                if not path_obj.is_absolute():
+                    # If relative, make it relative to the config base path (user data dir)
+                    # This ensures backups and default exports go to a known user location
+                    setattr(self.settings, folder_attr, str(self.base_path / path_obj)) 
+                else:
+                    setattr(self.settings, folder_attr, str(path_obj.resolve()))
+            else: # Is empty or None
+                # Set to default, relative to config base path
+                setattr(self.settings, folder_attr, str(self.base_path / default_folder_val))
+            
+            # Ensure the directory exists after resolving
+            try:
+                Path(getattr(self.settings, folder_attr)).mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                log_error(f"Could not create directory for {folder_attr} at {getattr(self.settings, folder_attr)}: {e}")
+
+
         self._save_json_file(asdict(self.settings), self.config_file)
 
     def load_prompt(self):
@@ -238,13 +304,19 @@ class SettingsManager:
         self.save_commands()
 
     def _create_backup(self, file_path: Path):
+        # Ensure backup_folder path is resolved correctly before use
+        current_backup_folder_str = self.settings.backup_folder
+        if not current_backup_folder_str: # Should have been defaulted in save_settings
+            current_backup_folder_str = str(self.base_path / DEFAULT_BACKUP_FOLDER)
+        
+        backup_dir = Path(current_backup_folder_str)
+        if not backup_dir.is_absolute(): # Should have been made absolute in save_settings
+            backup_dir = self.base_path / backup_dir
+            
         if not self.settings.versioning_enabled or not file_path.exists() or self.settings.max_backups <= 0:
             return
 
-        backup_dir = Path(self.settings.backup_folder)
         try:
-            if not backup_dir.is_absolute():
-                backup_dir = self.base_path / backup_dir
             backup_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             # Use the imported helper function correctly
@@ -265,6 +337,7 @@ class SettingsManager:
             log_error(f"Error creating backup for '{file_path.name}': {e}")
 
     def _backup_corrupted_file(self, file_path: Path, reason: str):
+        # Corrupted backups go into a subfolder of the main config dir
         backup_dir = self.base_path / "corrupted_backups"
         try:
             backup_dir.mkdir(parents=True, exist_ok=True)
@@ -311,19 +384,8 @@ class SettingsManager:
             # Use the imported helper function correctly
             log_error(f"Error managing backups in '{backup_dir}': {e}")
 
-    def get_app_data_folder_path(self) -> Path:
-        """Returns the base path where config files are stored."""
-        # This function is not typically part of SettingsManager itself,
-        # but rather a utility function. Keeping it here as per original structure for now.
-        # Consider moving to a general utils.py or main_app.py if it makes more sense.
-        if hasattr(sys, '_MEIPASS'): 
-            return Path(sys._MEIPASS)
-        return Path(os.path.dirname(os.path.abspath(__file__)))
-
-
-def get_app_base_path() -> Path:
-    """Determines the application's base directory for data/configs."""
+# This function is for asset loading (like icons) from bundle or dev location
+def get_app_asset_path() -> Path:
     if hasattr(sys, '_MEIPASS'):
-        return Path(sys.executable).parent
-    else:
-        return Path(__file__).parent
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent

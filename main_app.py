@@ -25,7 +25,7 @@ try:
         COLOR_STATUS_RECORDING_VAD_WAITING, COLOR_STATUS_TRANSCRIBING,
         COLOR_STATUS_RECORDING_AND_TRANSCRIBING, WHISPER_ENGINES, Theme as AppThemeEnum # Use alias
     )
-    from settings_manager import SettingsManager, get_app_base_path, AppSettings
+    from settings_manager import SettingsManager, get_user_config_dir, get_app_asset_path, AppSettings
     from theme_manager import ThemeManager # Theme enum itself is in constants now
     from hotkey_manager import HotkeyManager
     from tray_icon_manager import TrayIconManager
@@ -33,7 +33,7 @@ try:
     from alt_status_indicator import AltStatusIndicator
     from audio_service import AudioService
     from transcription_service import TranscriptionService
-    from whisper_lib_integration import FASTER_WHISPER_AVAILABLE
+    # from whisper_lib_integration import FASTER_WHISPER_AVAILABLE # REMOVE
 
     from main_window_view import MainWindowView
     from config_window_view import ConfigWindowView
@@ -57,13 +57,15 @@ except ImportError as e:
 class WhisperRApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.app_base_path = get_app_base_path()
+        self.app_asset_path = get_app_asset_path() # For assets like icons
+        self.user_config_path = get_user_config_dir("WhisperR") # For configs and logs
 
-        app_logger.LOGGER = AppLogger(self.app_base_path)
+        app_logger.LOGGER = AppLogger(self.user_config_path) # Logs go to user config dir
         log_essential("WhisperR Application starting...")
-        log_debug(f"Application base path: {self.app_base_path}")
+        log_debug(f"Application asset path: {self.app_asset_path}")
+        log_debug(f"User config path: {self.user_config_path}")
 
-        self.settings_manager = SettingsManager(self.app_base_path)
+        self.settings_manager = SettingsManager(self.user_config_path) # Settings manager uses user config dir
         self.settings: AppSettings = self.settings_manager.settings
 
         self.theme_manager = ThemeManager()
@@ -73,8 +75,9 @@ class WhisperRApp:
         self.root.minsize(650, 600)
         self._set_app_icon()
 
-        self.audio_service = AudioService(self.settings, self.root)
-        self.transcription_service = TranscriptionService(self.settings, self.root, self.settings_manager)
+        # Initialize TranscriptionService first as AudioService needs a reference to it
+        self.transcription_service = TranscriptionService(self.settings_manager, self.root, self.settings_manager)
+        self.audio_service = AudioService(self.settings_manager, self.root, self.transcription_service) # Pass transcription_service
         self.hotkey_manager = HotkeyManager(self.root)
 
         self.status_bar_win_manager: Optional[StatusBarManager] = None
@@ -83,13 +86,13 @@ class WhisperRApp:
 
         self.alt_status_indicator: Optional[AltStatusIndicator] = None
         try:
-            self.alt_status_indicator = AltStatusIndicator(self.root, self.app_base_path, self.theme_manager)
+            self.alt_status_indicator = AltStatusIndicator(self.root, self.app_asset_path, self.theme_manager) # Use asset_path
         except Exception as e_alt:
             log_error(f"Failed to initialize AltStatusIndicator: {e_alt}", exc_info=True)
 
         self.main_view = MainWindowView(
             self.root,
-            self.settings,
+            self.settings_manager, # Pass SettingsManager instance
             self.settings_manager.prompt, # Pass the actual prompt string
             self.theme_manager
         )
@@ -102,7 +105,7 @@ class WhisperRApp:
             show_window_action=self._action_show_window,
             toggle_recording_action=self._action_toggle_recording_external,
             quit_action=self._action_quit_application,
-            base_path=self.app_base_path
+            base_path=self.app_asset_path # Use asset_path for tray icon resources
         )
         self.tray_thread: Optional[threading.Thread] = None
 
@@ -117,10 +120,10 @@ class WhisperRApp:
 
     def _set_app_icon(self):
         try:
-            icon_path_obj = self.app_base_path / APP_ICON_NAME
-            if hasattr(sys, '_MEIPASS'):
-                icon_path_obj = Path(sys._MEIPASS) / APP_ICON_NAME
-            if not icon_path_obj.exists():
+            icon_path_obj = self.app_asset_path / APP_ICON_NAME # Use asset_path
+            # Fallback for dev mode if icon is not found relative to asset_path (e.g. settings_manager.py)
+            # but directly in the script's execution directory.
+            if not icon_path_obj.exists() and not hasattr(sys, '_MEIPASS'):
                  icon_path_obj = Path(os.path.dirname(os.path.abspath(__file__))) / APP_ICON_NAME
 
             if icon_path_obj.exists():
@@ -142,7 +145,7 @@ class WhisperRApp:
             log_error(f"Error setting application icon: {e}", exc_info=True)
 
     def _connect_signals_and_slots(self):
-        self.audio_service.set_transcription_queue(self.transcription_service.transcription_queue)
+        # self.audio_service.set_transcription_queue(self.transcription_service.transcription_queue) # Removed, AudioService now calls add_to_queue on TranscriptionService
         self.audio_service.set_callbacks(
             on_vad_status_change=self._handle_vad_status_change,
             on_audio_segment_saved=self._handle_audio_segment_saved,
@@ -206,7 +209,8 @@ class WhisperRApp:
             )
         self._update_all_status_indicators()
         self.tray_thread = threading.Thread(target=self.tray_manager.setup_tray_icon, daemon=True)
-        self.tray_thread.start()
+        self.tray_thread.start() 
+        # log_warning("DEBUG: Tray icon thread start is currently disabled.")
 
     def _update_setting_and_save(self, setting_name: str, value: Any, save_type: str = "settings"):
         current_value = getattr(self.settings, setting_name, None)
@@ -260,14 +264,32 @@ class WhisperRApp:
         self.main_view.update_pause_queue_button_ui(self.transcription_service.is_queue_processing_paused)
 
     def _action_show_window(self):
-        log_debug("Show window action triggered.")
+        log_debug("Show window hotkey action triggered.")
         try:
-            if self.root.winfo_exists():
-                self.root.deiconify(); self.root.lift(); self.root.focus_force()
-            if self.scratchpad_window and self.scratchpad_window.winfo_exists() and not self.scratchpad_window.is_visible():
-                self.scratchpad_window.show() # Ensure scratchpad is also shown
+            if not self.root.winfo_exists():
+                return
+
+            is_main_window_visible = self.root.winfo_viewable()
+
+            if not is_main_window_visible:
+                # Show windows
+                log_debug("Showing main window and eligible scratchpad.")
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+                if self.scratchpad_window and self.scratchpad_window.winfo_exists() and \
+                   not self.scratchpad_window.is_explicitly_closed():
+                    self.scratchpad_window.show()
+            else:
+                # Hide windows
+                log_debug("Hiding main window and eligible scratchpad via hotkey.")
+                self.root.withdraw()
+                if self.scratchpad_window and self.scratchpad_window.winfo_exists() and \
+                   not self.scratchpad_window.is_explicitly_closed() and \
+                   self.scratchpad_window.is_visible(): # Only hide if currently visible
+                    self.scratchpad_window.withdraw()
         except Exception as e:
-            log_error(f"Error showing window(s): {e}", exc_info=True)
+            log_error(f"Error in _action_show_window (toggle): {e}", exc_info=True)
 
     def _action_ok_hide_window(self):
         """Hides the main application window to the tray. Leaves scratchpad visible if open."""
@@ -278,8 +300,9 @@ class WhisperRApp:
     def _action_hide_window(self):
         """Hides the main application window to the tray, typically via close button or system action."""
         self.root.withdraw()
-        if self.tray_manager.tray_icon and self.tray_manager.tray_icon.visible:
-             self.tray_manager.notify("WhisperR Hidden", f"{self.tray_manager.app_name} is running in the background.")
+        # if self.tray_manager.tray_icon and self.tray_manager.tray_icon.visible: # DEBUG: Disable tray notify
+        #      self.tray_manager.notify("WhisperR Hidden", f"{self.tray_manager.app_name} is running in the background.")
+        log_warning("DEBUG: Tray notification on hide is currently disabled.")
 
     def _action_quit_application(self):
         log_essential("Quit action initiated...")
@@ -295,9 +318,10 @@ class WhisperRApp:
         self.settings_manager.save_all()
         if self.status_bar_win_manager: self.status_bar_win_manager.destroy_status_bar()
         if self.alt_status_indicator: self.alt_status_indicator.destroy_indicator()
-        if self.tray_manager: self.tray_manager.stop_tray_icon()
-        if self.tray_thread and self.tray_thread.is_alive():
-            self.tray_thread.join(timeout=1.0)
+        if self.tray_manager: self.tray_manager.stop_tray_icon() 
+        if self.tray_thread and self.tray_thread.is_alive(): 
+            self.tray_thread.join(timeout=1.0) 
+        # log_warning("DEBUG: Tray icon stop/join calls in quit_application are currently disabled.")
         get_logger().close()
         if self.root.winfo_exists():
             self.root.after(50, self.root.destroy)
@@ -368,7 +392,10 @@ class WhisperRApp:
     def _action_open_scratchpad(self):
         if not self.scratchpad_window or not self.scratchpad_window.winfo_exists():
             self.scratchpad_window = ScratchpadWindow(self.root, self.settings, self.theme_manager)
-        self.scratchpad_window.show()
+            # For a newly created window, mark_as_opened_by_user will also call show()
+            self.scratchpad_window.mark_as_opened_by_user() 
+        else:
+            self.scratchpad_window.mark_as_opened_by_user()
 
     def _action_open_config_window(self):
         if self.config_window and self.config_window.winfo_exists():
@@ -383,9 +410,7 @@ class WhisperRApp:
             record_hotkey_callback=lambda: self.hotkey_manager.record_new_hotkey(self.config_window if self.config_window else self.root),
             vad_calibrate_callback=self._trigger_vad_calibration,
             open_command_editor_callback=self._action_open_command_editor,
-            delete_session_files_callback=self._action_delete_session_files_now,
-            check_faster_whisper_availability_callback=lambda: FASTER_WHISPER_AVAILABLE,
-            manage_fw_models_callback=self._action_manage_fw_models
+            delete_session_files_callback=self._action_delete_session_files_now
         )
 
     def _action_open_command_editor(self):
@@ -417,12 +442,13 @@ class WhisperRApp:
         self.main_view.update_shortcut_display_ui()
         if old_settings.selected_audio_device_index != self.settings.selected_audio_device_index:
             self.audio_service.update_selected_audio_device(self.settings.selected_audio_device_index)
-        if old_settings.whisper_engine_type != self.settings.whisper_engine_type or \
-           (self.settings.whisper_engine_type == WHISPER_ENGINES[1] and \
-            old_settings.faster_whisper_model_name != self.settings.faster_whisper_model_name):
-            if self.transcription_service.faster_whisper_instance:
-                self.transcription_service.faster_whisper_instance.unload_model()
-                log_essential("Whisper engine or model changed. Model will be reloaded on next use.")
+        # if old_settings.whisper_engine_type != self.settings.whisper_engine_type or \ # REMOVE - engine choice will be gone
+        #    (self.settings.whisper_engine_type == WHISPER_ENGINES[1] and \ # REMOVE
+        #     old_settings.faster_whisper_model_name != self.settings.faster_whisper_model_name): # REMOVE
+            # if self.transcription_service.faster_whisper_instance: # REMOVE
+                # self.transcription_service.faster_whisper_instance.unload_model() # REMOVE
+                # log_essential("Whisper engine or model changed. Model will be reloaded on next use.") # REMOVE
+        log_debug("Faster-Whisper related model change check skipped as it's CLI-only now.")
         if self.status_bar_win_manager:
             if old_settings.status_bar_enabled != self.settings.status_bar_enabled or \
                old_settings.status_bar_position != self.settings.status_bar_position or \
@@ -448,7 +474,7 @@ class WhisperRApp:
                  self.theme_manager.apply_theme(self.command_editor_window, self.settings.ui_theme)
                  if hasattr(self.command_editor_window, '_apply_theme'): self.command_editor_window._apply_theme()
             if self.alt_status_indicator: self.alt_status_indicator.update_theme()
-        get_logger().configure(self.settings.logging_level, self.settings.log_to_file)
+        get_logger().configure(self.settings.logging_level, self.settings.log_to_file, self.settings.max_log_files)
         self.settings_manager.save_settings()
         self.main_view.update_ui_from_settings()
         self._update_all_status_indicators()
@@ -543,15 +569,6 @@ class WhisperRApp:
             log_essential(f"File Cleanup: {result_msg}")
             if ask_confirm: messagebox.showinfo("Cleanup Result", result_msg, parent=parent_window)
         elif ask_confirm: log_extended("File deletion cancelled by user.")
-
-    def _action_manage_fw_models(self):
-        parent_win = self.config_window if self.config_window and self.config_window.winfo_exists() else self.root
-        fw_path = "Not available"
-        if self.transcription_service.faster_whisper_instance:
-             fw_path = str(self.transcription_service.faster_whisper_instance.get_model_storage_path())
-        messagebox.showinfo("Model Management",
-                            "A UI for managing Faster-Whisper models is planned.\n\n"
-                            f"Models are typically stored in:\n{fw_path}", parent=parent_win)
 
     def _get_current_status_indicator_color(self) -> str:
         is_rec, is_vad_speak = self.audio_service.is_recording_active, self.audio_service.is_vad_speaking

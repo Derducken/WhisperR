@@ -107,20 +107,32 @@ class AltStatusIndicator:
         # Use themed background for the label, in case icon has alpha
         # This ensures the label itself blends if the icon isn't fully opaque
         colors = self.theme_manager.get_current_colors(self.root, self.theme_manager.current_theme_name)
-        self.current_bg_color = colors.get("bg", COLOR_STATUS_IDLE_NOT_RECORDING) # Use theme bg for label
+        self.current_bg_color = colors.get("bg", COLOR_STATUS_IDLE_NOT_RECORDING) # Fallback
         
-        self.indicator_window.config(bg=self.current_bg_color) # Set Toplevel BG too
-        # Try to make the Toplevel itself transparent if possible, may vary by OS/WM
+        # For Windows, try to use -transparentcolor for true alpha blending of PNGs
+        # Use pure white as the key color, assuming icons are designed with this in mind for transparency.
+        transparent_key_color = "#FFFFFF" # Pure white
+
+        self.indicator_window.config(bg=transparent_key_color) # Set Toplevel BG to the key color
         try:
-            # This is a common way on X11 systems with compositors
-             self.indicator_window.wm_attributes("-transparent", True)
-             self.indicator_window.config(bg='systemTransparent') # some systems use this
-             self.indicator_window.attributes("-alpha", 0.0) # Make window fully transparent, icon will be opaque
-        except tk.TclError:
-             log_extended("Setting -transparent attribute failed for alt status indicator.")
+            # This is the key for Windows transparency with overrideredirect
+            self.indicator_window.attributes("-transparentcolor", transparent_key_color)
+            log_debug(f"Set -transparentcolor to {transparent_key_color} for alt status indicator.")
+        except tk.TclError as e_trans:
+            log_extended(f"Setting -transparentcolor failed for alt status indicator: {e_trans}")
+            # Fallback for other OS or if -transparentcolor fails:
+            try:
+                self.indicator_window.wm_attributes("-transparent", True)
+                # On some systems, setting a system-defined transparent bg helps
+                self.indicator_window.config(bg='systemTransparent') 
+                log_debug("Set wm_attributes -transparent to True and bg to systemTransparent.")
+            except tk.TclError as e_wm:
+                log_extended(f"Setting wm_attributes -transparent failed: {e_wm}")
+                # If all else fails, use the theme background
+                self.indicator_window.config(bg=self.current_bg_color)
 
 
-        self.icon_label = ttk.Label(self.indicator_window, background=self.current_bg_color)
+        self.icon_label = ttk.Label(self.indicator_window, background=transparent_key_color)
         self.icon_label.pack(fill=tk.BOTH, expand=True)
 
         self._set_geometry()

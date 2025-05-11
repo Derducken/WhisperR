@@ -3,22 +3,25 @@ from tkinter import ttk, Menu
 from typing import Callable, List, Tuple, Optional # Ensure Optional and Callable are here
 from app_logger import get_logger, log_extended, log_error # Ensure log_error is imported
 from constants import DEFAULT_LANGUAGE, DEFAULT_MODEL, EXTENDED_MODEL_OPTIONS, Theme
-from settings_manager import AppSettings
+from settings_manager import AppSettings, SettingsManager # Import SettingsManager
 from theme_manager import ThemeManager
 
 class MainWindowView:
-    def __init__(self, root: tk.Tk, settings: AppSettings, initial_prompt: str, theme_manager: ThemeManager):
+    def __init__(self, root: tk.Tk, settings_manager: SettingsManager, initial_prompt: str, theme_manager: ThemeManager): # Changed settings to settings_manager
         self.root = root
-        self.settings = settings
+        self.settings_manager = settings_manager # Store settings_manager
+        # self.settings is now a property-like access to current settings via settings_manager
         self.initial_prompt_val = initial_prompt
         self.theme_manager = theme_manager
 
-        self.language_var = tk.StringVar(value=settings.language)
-        self.model_var = tk.StringVar(value=settings.model)
-        self.translation_var = tk.BooleanVar(value=settings.translation_enabled)
-        self.command_mode_var = tk.BooleanVar(value=settings.command_mode)
-        self.timestamps_disabled_var = tk.BooleanVar(value=settings.timestamps_disabled)
-        self.clear_text_output_var = tk.BooleanVar(value=settings.clear_text_output)
+        # Access settings via self.settings_manager.settings for initialization
+        current_settings = self.settings_manager.settings
+        self.language_var = tk.StringVar(value=current_settings.language)
+        self.model_var = tk.StringVar(value=current_settings.model)
+        self.translation_var = tk.BooleanVar(value=current_settings.translation_enabled)
+        self.command_mode_var = tk.BooleanVar(value=current_settings.command_mode)
+        self.timestamps_disabled_var = tk.BooleanVar(value=current_settings.timestamps_disabled)
+        self.clear_text_output_var = tk.BooleanVar(value=current_settings.clear_text_output)
         
         self.shortcut_display_var = tk.StringVar()
         self.queue_indicator_var = tk.StringVar(value="Queue: 0")
@@ -40,7 +43,7 @@ class MainWindowView:
             self.prompt_text_widget.delete("1.0", tk.END) 
             self.prompt_text_widget.insert("1.0", self.initial_prompt_val)
         
-        self.update_ui_from_settings()
+        self.update_ui_from_settings() # This will now use self.settings_manager.settings
 
     def _create_widgets(self):
         menubar = Menu(self.root)
@@ -118,12 +121,13 @@ class MainWindowView:
         self.pause_queue_button.pack(side=tk.RIGHT, anchor=tk.E, padx=(5, 0))
 
     def update_ui_from_settings(self):
-        self.language_var.set(self.settings.language)
-        self.model_var.set(self.settings.model)
-        self.translation_var.set(self.settings.translation_enabled)
-        self.command_mode_var.set(self.settings.command_mode)
-        self.timestamps_disabled_var.set(self.settings.timestamps_disabled)
-        self.clear_text_output_var.set(self.settings.clear_text_output)
+        current_settings = self.settings_manager.settings # Use current settings
+        self.language_var.set(current_settings.language)
+        self.model_var.set(current_settings.model)
+        self.translation_var.set(current_settings.translation_enabled)
+        self.command_mode_var.set(current_settings.command_mode)
+        self.timestamps_disabled_var.set(current_settings.timestamps_disabled)
+        self.clear_text_output_var.set(current_settings.clear_text_output)
         
         self.update_shortcut_display_ui()
         log_extended("Main window UI updated from settings.")
@@ -137,22 +141,24 @@ class MainWindowView:
         
         if self.recording_indicator_label and self.recording_indicator_label.winfo_exists():
             indicator_color = self.theme_manager.themes[Theme.LIGHT.value]["disabled_fg"] 
+            current_settings = self.settings_manager.settings # Use current settings
             try:
-                 current_theme_name = self.settings.ui_theme
+                 current_theme_name = current_settings.ui_theme
                  colors = self.theme_manager.get_current_colors(self.root, current_theme_name)
                  indicator_color = colors.get("disabled_fg", indicator_color)
             except Exception: pass
 
             if self.is_recording_visual_indicator:
-                if self.settings.command_mode:
+                if current_settings.command_mode: # Use current settings
                     indicator_color = "orange" if vad_is_speaking else "darkkhaki" 
                 else:
                     indicator_color = "red"
             self.recording_indicator_label.config(foreground=indicator_color)
 
     def update_shortcut_display_ui(self):
-        toggle_key = self.settings.hotkey_toggle_record or "[Not Set]"
-        show_key = self.settings.hotkey_show_window or "[Not Set]"
+        current_settings = self.settings_manager.settings # Use current settings
+        toggle_key = current_settings.hotkey_toggle_record or "[Not Set]"
+        show_key = current_settings.hotkey_show_window or "[Not Set]"
         self.shortcut_display_var.set(f"{toggle_key}: Toggle Record\n{show_key}: Show Window")
 
     def update_queue_indicator_ui(self, queue_size: int):

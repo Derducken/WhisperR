@@ -4,7 +4,7 @@ import enum
 CONFIG_FILE_NAME = "config.json"
 PROMPT_FILE_NAME = "prompt.json"
 COMMANDS_FILE_NAME = "commands.json"
-APP_ICON_NAME = "icon.png"
+APP_ICON_NAME = "WhisperR_icon.png" # Changed to actual icon file name
 LOG_FILE_PREFIX = "whisperr_log_"
 
 # --- Default Hotkeys ---
@@ -29,7 +29,11 @@ MAX_ALT_INDICATOR_OFFSET = 100
 # --- Logging ---
 LOG_LEVELS = ["None", "ERROR", "WARNING", "Essential", "Extended", "Everything", "Debug"] # Ensure WARNING is here
 DEFAULT_LOGGING_LEVEL = "Essential"
+DEFAULT_MAX_LOG_FILES = 10 # Max number of log files to keep
 # LOG_LEVEL_ORDER is generated in app_logger.py based on this list
+
+# --- Transcription Behavior ---
+DEFAULT_AUTO_ADD_SPACE = True
 
 # --- Audio ---
 AUDIO_QUEUE_SENTINEL = None
@@ -51,30 +55,26 @@ AUDIO_BLOCKSIZE = 1024
 AUDIO_DTYPE = 'int16'
 
 # --- Whisper Engine ---
-WHISPER_ENGINES = ["Executable", "FasterWhisperLib"]
-DEFAULT_WHISPER_ENGINE = "Executable"
+WHISPER_ENGINES = ["Executable"] # Now only one option
+DEFAULT_WHISPER_ENGINE = "Executable" # This setting might become redundant
 DEFAULT_WHISPER_EXECUTABLE = "whisper"
 
 # --- Models ---
-FASTER_WHISPER_MODELS = [
-    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-    "medium", "medium.en", "large-v1", "large-v2", "large-v3",
-    "distil-large-v2", "distil-medium.en", "distil-small.en"
-]
+# FASTER_WHISPER_MODELS = [ # REMOVE
+#     "tiny", "tiny.en", "base", "base.en", "small", "small.en", # REMOVE
+#     "medium", "medium.en", "large-v1", "large-v2", "large-v3", # REMOVE
+#     "distil-large-v2", "distil-medium.en", "distil-small.en" # REMOVE
+# ] # REMOVE
 CLI_MODEL_OPTIONS = ["tiny", "base", "small", "medium", "large",
                      "tiny.en", "base.en", "small.en", "medium.en"]
-EXTENDED_MODEL_OPTIONS = sorted(list(set(CLI_MODEL_OPTIONS + [
-    "Systran/faster-whisper-large-v3", "Systran/faster-whisper-large-v2",
-    "Systran/faster-whisper-medium", "Systran/faster-whisper-medium.en",
-    "Systran/faster-whisper-small", "Systran/faster-whisper-small.en",
-    "Systran/faster-whisper-base", "Systran/faster-whisper-base.en",
-    "Systran/faster-whisper-tiny", "Systran/faster-whisper-tiny.en",
-    "distil-large-v2", "distil-medium.en", "distil-small.en"
-])))
+# EXTENDED_MODEL_OPTIONS are effectively just CLI_MODEL_OPTIONS now for model dropdowns if they use it.
+# Or, the model dropdown in UI should only show CLI_MODEL_OPTIONS.
+EXTENDED_MODEL_OPTIONS = sorted(list(set(CLI_MODEL_OPTIONS)))
+
 
 DEFAULT_LANGUAGE = "en"
 DEFAULT_MODEL = "large" # For CLI
-DEFAULT_FW_MODEL = "base" # For faster-whisper lib
+# DEFAULT_FW_MODEL = "base" # REMOVE - For faster-whisper lib
 
 # --- UI Themes ---
 class Theme(enum.Enum):

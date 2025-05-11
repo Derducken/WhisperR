@@ -18,20 +18,22 @@ from constants import (
 from settings_manager import AppSettings # For type hinting
 
 # For saving in different formats (MP3, AAC)
-try:
-    from pydub import AudioSegment # type: ignore
-    PYDUB_AVAILABLE = True
-except ImportError:
-    PYDUB_AVAILABLE = False
-    log_extended("pydub library not found. MP3/AAC saving will be disabled. Install with 'pip install pydub'. FFmpeg also required.")
+# try: # REMOVE PYDUB
+    # from pydub import AudioSegment # type: ignore # REMOVE PYDUB
+    # PYDUB_AVAILABLE = True # REMOVE PYDUB
+# except ImportError: # REMOVE PYDUB
+PYDUB_AVAILABLE = False # Always False now
+log_extended("pydub library integration is currently disabled. MP3/AAC saving will not be available.")
 
 
 class AudioService:
     PYDUB_AVAILABLE = PYDUB_AVAILABLE # Make module-level variable available as class attribute
 
-    def __init__(self, settings_ref: AppSettings, root_tk_instance: tk.Tk):
-        self.settings = settings_ref # Reference to live AppSettings
+    def __init__(self, settings_manager_ref: Any, root_tk_instance: tk.Tk, transcription_service_ref: Optional[Any] = None): # Added transcription_service_ref
+        self.settings_manager = settings_manager_ref # Store settings_manager
+        self.settings = settings_manager_ref.settings # Keep direct ref, but use settings_manager.settings for dynamic values
         self.root = root_tk_instance # For UI updates (messagebox, after calls)
+        self.transcription_service = transcription_service_ref # Store ref
 
         self.is_recording_active: bool = False # Master recording state (controlled by user)
         self.is_vad_speaking: bool = False   # VAD determined speech
@@ -43,7 +45,8 @@ class AudioService:
         self._recording_thread: Optional[threading.Thread] = None
         self._stop_recording_event = threading.Event() # For signaling thread to stop
 
-        self.transcription_queue: Optional[queue.Queue] = None # To be set by main app
+        # self.transcription_queue is no longer directly used by AudioService.
+        # It will call self.transcription_service.add_to_queue()
 
         # Callbacks to be set by main app
         self.on_vad_status_change: Optional[Callable[[bool], None]] = None # (is_speaking)
@@ -57,8 +60,8 @@ class AudioService:
         self.calibration_update_callback: Optional[Callable[[float, float, bool], None]] = None #(avg_energy, peak_energy, is_done)
         self.calibration_finished_callback: Optional[Callable[[int], None]] = None # (recommended_threshold)
 
-    def set_transcription_queue(self, q: queue.Queue):
-        self.transcription_queue = q
+    # def set_transcription_queue(self, q: queue.Queue): # Removed
+    #     self.transcription_queue = q # Removed
 
     def set_callbacks(self, on_vad_status_change, on_audio_segment_saved, on_recording_error):
         self.on_vad_status_change = on_vad_status_change
@@ -91,8 +94,9 @@ class AudioService:
         self._recording_thread.start()
         log_essential("Recording thread started.")
         # Initial VAD status update might be needed if starting in VAD mode
-        if self.settings.command_mode: # command_mode implies VAD
-             self._notify_vad_status_change(False)
+        if self.settings_manager.settings.command_mode: # command_mode implies VAD
+            self._notify_vad_status_change(False)
+        # self.transcription_queue is now managed by TranscriptionService, AudioService will call add_to_queue on it.
 
 
     def stop_recording(self, process_final_segment=True):
@@ -119,10 +123,10 @@ class AudioService:
             self._current_audio_segment_chunks = [] # Clear any remaining chunks
             self.is_vad_speaking = False
             self._silence_start_time = None
-            if self.settings.command_mode:
+            if self.settings_manager.settings.command_mode:
                 self._notify_vad_status_change(False) # Ensure UI reflects stopped VAD
 
-        log_essential(f"Recording stopped. Queue size: {self.transcription_queue.qsize() if self.transcription_queue else 'N/A'}")
+        log_essential(f"Recording stopped. Queue size: {self.transcription_service.transcription_queue.qsize() if self.transcription_service else 'N/A'}")
 
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info: Any, status: sd.CallbackFlags):
@@ -176,9 +180,10 @@ class AudioService:
             # log_debug("Empty audio data chunk received in normal recording mode.") # Optional: for further debugging
 
         # VAD Logic (only if command_mode is enabled)
-        if self.settings.command_mode:
+        current_settings = self.settings_manager.settings # Get current settings
+        if current_settings.command_mode:
             rms = np.sqrt(np.mean(data_copy.astype(np.float32)**2))
-            is_currently_loud = rms >= self.settings.vad_energy_threshold
+            is_currently_loud = rms >= current_settings.vad_energy_threshold
             
             if is_currently_loud:
                 if not self.is_vad_speaking: # Transition to speaking
@@ -188,7 +193,7 @@ class AudioService:
                 if self._silence_start_time is None:
                     self._silence_start_time = current_time_monotonic
                 
-                if current_time_monotonic - self._silence_start_time >= self.settings.silence_threshold_seconds:
+                if current_time_monotonic - self._silence_start_time >= current_settings.silence_threshold_seconds:
                     # Silence duration met, save segment
                     if self.is_recording_active: # Double check master recording state
                         # Schedule save on main thread via root.after to avoid race conditions with UI/queue
@@ -201,7 +206,7 @@ class AudioService:
             self._silence_start_time = None
             
             # Reset VAD state when command_mode is disabled
-            if not self.settings.command_mode and self.is_vad_speaking:
+            if not current_settings.command_mode and self.is_vad_speaking:
                 self._notify_vad_status_change(False)
 
         # Max segment length check (for both VAD and continuous modes)
@@ -210,14 +215,14 @@ class AudioService:
         current_num_frames = sum(len(chunk) for chunk in self._current_audio_segment_chunks)
         segment_duration_seconds = current_num_frames / AUDIO_SAMPLE_RATE
         
-        if segment_duration_seconds >= self.settings.max_memory_segment_duration_seconds:
-            log_extended(f"Max segment duration ({self.settings.max_memory_segment_duration_seconds}s) reached, saving segment.")
+        if segment_duration_seconds >= current_settings.max_memory_segment_duration_seconds:
+            log_extended(f"Max segment duration ({current_settings.max_memory_segment_duration_seconds}s) reached, saving segment.")
             if self.is_recording_active:
                  self.root.after(0, self._save_current_segment_and_reset_vad_state)
 
 
     def _record_audio_loop(self):
-        log_essential(f"Audio recording loop started. Device: {self.settings.selected_audio_device_index or 'default'}")
+        log_essential(f"Audio recording loop started. Device: {self.settings_manager.settings.selected_audio_device_index or 'default'}")
         
         # Reset audio system completely
         try:
@@ -231,7 +236,7 @@ class AudioService:
             return
 
         # Get default device if none selected
-        target_device = self.settings.selected_audio_device_index
+        target_device = self.settings_manager.settings.selected_audio_device_index
         if target_device is None:
             try:
                 default_input = sd.default.device[0] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
@@ -314,7 +319,7 @@ class AudioService:
             self._audio_stream = None # Clear stream reference
             self.is_recording_active = False # Ensure master state reflects loop exit
             # If VAD was active, ensure its UI state is reset
-            if self.settings.command_mode and self.is_vad_speaking:
+            if self.settings_manager.settings.command_mode and self.is_vad_speaking: # Use settings_manager
                 self._notify_vad_status_change(False)
             log_essential("Audio recording loop finished.")
 
@@ -333,7 +338,7 @@ class AudioService:
                 self.root.after(0, self.on_recording_error, "Audio stream stopped unexpectedly.")
             # Ensure recording is marked as stopped
             self.is_recording_active = False
-            if self.settings.command_mode:
+            if self.settings_manager.settings.command_mode: # Use settings_manager
                 self._notify_vad_status_change(False)
 
 
@@ -341,7 +346,7 @@ class AudioService:
         """Saves the current audio buffer and resets VAD state. Must be called from main thread or via root.after()."""
         if not self._current_audio_segment_chunks:
             # If VAD was active, ensure UI is reset even if no audio
-            if self.settings.command_mode and self.is_vad_speaking:
+            if self.settings_manager.settings.command_mode and self.is_vad_speaking: # Use settings_manager
                 self._notify_vad_status_change(False)
             self._silence_start_time = None # Reset silence timer
             return
@@ -350,7 +355,7 @@ class AudioService:
         self._current_audio_segment_chunks = [] # Clear buffer for next segment
         
         # Reset VAD state immediately after copying buffer
-        if self.settings.command_mode:
+        if self.settings_manager.settings.command_mode: # Use settings_manager
             self._notify_vad_status_change(False)
         self._silence_start_time = None
 
@@ -366,8 +371,8 @@ class AudioService:
             return
 
         timestamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time()*1000)%1000:03d}"
-        
-        export_dir = Path(self.settings.export_folder)
+        current_settings = self.settings_manager.settings # Get current settings
+        export_dir = Path(current_settings.export_folder)
         try:
             export_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
@@ -375,7 +380,7 @@ class AudioService:
             # Optionally notify user or fallback to a default temp location
             return
 
-        file_format = self.settings.audio_segment_format.lower()
+        file_format = current_settings.audio_segment_format.lower()
         filename_base = f"recording_{timestamp}"
         output_filepath = export_dir / f"{filename_base}.{file_format}"
 
@@ -430,11 +435,13 @@ class AudioService:
 
 
             log_essential(f"Audio segment saved: {output_filepath}")
-            if self.settings.beep_on_save_audio_segment:
-                self.play_beep_sound() # Assuming main app provides this or we add it here
+            if current_settings.beep_on_save_audio_segment:
+                self.play_beep_sound()
 
-            if self.transcription_queue:
-                self.transcription_queue.put(str(output_filepath)) # Add full path string to queue
+            if self.transcription_service: # Use the reference
+                self.transcription_service.add_to_queue(str(output_filepath))
+            else:
+                log_error("TranscriptionService reference not available in AudioService to add to queue.")
             
             if self.on_audio_segment_saved:
                 self.root.after(0, self.on_audio_segment_saved, output_filepath)
@@ -489,8 +496,11 @@ class AudioService:
 
     def update_selected_audio_device(self, device_index: Optional[int]):
         """Updates the sounddevice default and internal setting."""
-        original_setting = self.settings.selected_audio_device_index
-        self.settings.selected_audio_device_index = device_index
+        # This method modifies self.settings directly, which is fine as it's called from main_app
+        # which then saves the settings object held by settings_manager.
+        # So, direct self.settings access here is okay.
+        original_setting = self.settings_manager.settings.selected_audio_device_index
+        self.settings_manager.settings.selected_audio_device_index = device_index
         
         is_currently_recording = self.is_recording_active
         if is_currently_recording:
@@ -507,14 +517,14 @@ class AudioService:
                     log_essential(f"Audio input device set to: {device_index} ({devices[device_index]['name']})")
                 else:
                     log_error(f"Invalid audio device index: {device_index}. Reverting to previous or default.")
-                    self.settings.selected_audio_device_index = original_setting # Revert
+                    self.settings_manager.settings.selected_audio_device_index = original_setting # Revert
                     # sd.default.device = original_setting or None # Set back, None will use system default
             else: # User selected "None" or default
                 sd.default.device = None # Let PortAudio pick system default
                 log_essential("Audio input device set to system default.")
         except Exception as e:
             log_error(f"Failed to set audio device {device_index}: {e}", exc_info=True)
-            self.settings.selected_audio_device_index = original_setting # Revert on error
+            self.settings_manager.settings.selected_audio_device_index = original_setting # Revert on error
             # sd.default.device = original_setting or None
             if self.root and self.root.winfo_exists(): # Check if UI is available
                  messagebox.showerror("Audio Device Error", f"Could not set audio device: {e}", parent=self.root)
@@ -545,7 +555,7 @@ class AudioService:
         self._recording_thread.start()
 
     def _vad_calibration_loop(self):
-        log_extended(f"VAD calibration loop started. Device: {self.settings.selected_audio_device_index or 'default'}")
+        log_extended(f"VAD calibration loop started. Device: {self.settings_manager.settings.selected_audio_device_index or 'default'}")
         
         # Phase 1: Record silence sample
         self.root.after(0, self.calibration_update_callback, 0, 0, False, "Preparing to record silence...")
@@ -624,7 +634,7 @@ class AudioService:
             log_error(f"Failed to reinitialize PortAudio for calibration: {e}")
             # Proceeding anyway, but this might be the source of issues if it fails
             
-        temp_dir = Path(self.settings.export_folder) / "calibration_temp"
+        temp_dir = Path(self.settings_manager.settings.export_folder) / "calibration_temp"
         try:
             temp_dir.mkdir(parents=True, exist_ok=True)
             log_extended(f"Created calibration temp dir: {temp_dir}")
@@ -641,7 +651,7 @@ class AudioService:
         self._stop_recording_event.clear()
         self._last_chunk_time = time.monotonic()
         
-        target_device = self.settings.selected_audio_device_index
+        target_device = self.settings_manager.settings.selected_audio_device_index
         log_extended(f"Starting calibration recording on device {target_device}...")
         
         try:

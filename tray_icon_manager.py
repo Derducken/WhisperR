@@ -83,18 +83,25 @@ class TrayIconManager:
             pystray.MenuItem("Quit " + self.app_name, self._on_quit)
         )
 
-        self.tray_icon = pystray.Icon(self.app_name.lower().replace(" ", "_"), self.icon_image, self.app_name, menu)
+        # Use a consistent, simple name like the old version, instead of lowercasing/replacing spaces.
+        # The app_name itself is "WhisperR" which is fine.
+        self.tray_icon = pystray.Icon(self.app_name, self.icon_image, self.app_name, menu)
+        log_debug("pystray.Icon object created.")
         
         try:
-            log_essential("Starting tray icon...")
-            self.tray_icon.run() # This is a blocking call
+            log_essential("Attempting to start tray_icon.run()...")
+            if self.tray_icon:
+                self.tray_icon.run() # This is a blocking call
+                log_debug("tray_icon.run() completed without raising an immediate Python exception.")
+            else:
+                log_error("self.tray_icon was None before tray_icon.run() call. This should not happen.")
         except SystemExit:
              log_essential("Tray icon exited via SystemExit (likely on app quit).")
-        except Exception as e:
-            log_error(f"Error running tray icon: {e}", exc_info=True)
+        except Exception: # Catch any Python exception
+            log_error("Exception during tray_icon.run() or its setup:", exc_info=True) # exc_info=True logs traceback
             self.tray_icon = None # Ensure it's None if run failed
         finally:
-            log_extended("Tray icon run() method has finished.")
+            log_extended("Tray icon run() method has finished or an error occurred before/during its call.")
 
 
     def stop_tray_icon(self):

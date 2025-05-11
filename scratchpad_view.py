@@ -16,10 +16,11 @@ class ScratchpadWindow(tk.Toplevel):
         self.title("WhisperR Scratchpad")
         self.geometry("550x600") # Increased default size
         # self.transient(parent) # Not transient, can exist independently
-        self.protocol("WM_DELETE_WINDOW", self.hide_to_tray) # Use new method
+        self.protocol("WM_DELETE_WINDOW", self._handle_explicit_close) 
 
         self.text_widget: Optional[tk.Text] = None
         self.append_mode_var = tk.BooleanVar(value=self.settings.scratchpad_append_mode)
+        self.was_explicitly_closed: bool = False
 
         self._apply_theme()
         self._create_widgets()
@@ -79,13 +80,22 @@ class ScratchpadWindow(tk.Toplevel):
         self.lift()
         self.focus_force()
 
-    def hide_to_tray(self):
-        """Hides the window. Called by WM_DELETE_WINDOW or minimize."""
+    def _handle_explicit_close(self):
+        """Called by WM_DELETE_WINDOW (X button)."""
+        self.was_explicitly_closed = True
         self.withdraw()
 
     def iconify(self):
-        """Override minimize button to hide to tray."""
-        self.hide_to_tray()
+        """Override minimize button to just hide (withdraw)."""
+        self.withdraw()
+
+    def mark_as_opened_by_user(self):
+        """Called when user explicitly opens the window (e.g., via menu)."""
+        self.was_explicitly_closed = False
+        self.show()
+
+    def is_explicitly_closed(self) -> bool:
+        return self.was_explicitly_closed
 
     def is_visible(self) -> bool:
         """Checks if the window is currently visible."""

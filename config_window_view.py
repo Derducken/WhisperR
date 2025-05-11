@@ -9,7 +9,7 @@ from theme_manager import ThemeManager
 from ui_components import ConfigSection, create_browse_row
 from constants import (
     LOG_LEVELS, CLOSE_BEHAVIORS, STATUS_BAR_POSITIONS, WHISPER_ENGINES,
-    FASTER_WHISPER_MODELS, AUDIO_FORMATS, AUDIO_FORMAT_TOOLTIPS,
+    AUDIO_FORMATS, AUDIO_FORMAT_TOOLTIPS,
     MIN_MAX_MEMORY_SEGMENT_DURATION, MAX_MAX_MEMORY_SEGMENT_DURATION,
     UI_THEMES, ALT_INDICATOR_POSITIONS, MIN_ALT_INDICATOR_SIZE, MAX_ALT_INDICATOR_SIZE,
     MIN_ALT_INDICATOR_OFFSET, MAX_ALT_INDICATOR_OFFSET, CLI_MODEL_OPTIONS
@@ -24,9 +24,7 @@ class ConfigWindowView(tk.Toplevel):
                  record_hotkey_callback: Callable[[], Optional[str]],
                  vad_calibrate_callback: Callable[[int], Optional[int]],
                  open_command_editor_callback: Callable,
-                 delete_session_files_callback: Callable,
-                 check_faster_whisper_availability_callback: Callable[[], bool],
-                 manage_fw_models_callback: Callable):
+                 delete_session_files_callback: Callable):
         
         super().__init__(tk_parent)
         self.app_instance = app_instance # Store the WhisperRApp instance
@@ -41,8 +39,8 @@ class ConfigWindowView(tk.Toplevel):
         self.vad_calibrate_callback = vad_calibrate_callback
         self.open_command_editor_callback = open_command_editor_callback
         self.delete_session_files_callback = delete_session_files_callback
-        self.check_fw_available = check_faster_whisper_availability_callback
-        self.manage_fw_models_cb = manage_fw_models_callback
+        # self.check_fw_available = check_faster_whisper_availability_callback # REMOVE
+        # self.manage_fw_models_cb = manage_fw_models_callback # REMOVE
 
         self.title("WhisperR Configuration")
         self.geometry("650x750")
@@ -51,9 +49,9 @@ class ConfigWindowView(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
 
         # Tkinter Variables
-        self.whisper_engine_type_var = tk.StringVar(value=self.settings.whisper_engine_type)
+        # self.whisper_engine_type_var = tk.StringVar(value=self.settings.whisper_engine_type) # REMOVE - No engine choice
         self.whisper_executable_var = tk.StringVar(value=str(Path(self.settings.whisper_executable)))
-        self.faster_whisper_model_name_var = tk.StringVar(value=self.settings.faster_whisper_model_name)
+        # self.faster_whisper_model_name_var = tk.StringVar(value=self.settings.faster_whisper_model_name) # REMOVE
         self.export_folder_var = tk.StringVar(value=str(Path(self.settings.export_folder)))
         self.hotkey_toggle_record_var = tk.StringVar(value=self.settings.hotkey_toggle_record)
         self.hotkey_show_window_var = tk.StringVar(value=self.settings.hotkey_show_window)
@@ -84,12 +82,14 @@ class ConfigWindowView(tk.Toplevel):
         self.close_behavior_var = tk.StringVar(value=self.settings.close_behavior)
         self.ui_theme_var = tk.StringVar(value=self.settings.ui_theme)
         self.audio_format_tooltip_var = tk.StringVar() # For audio format tooltip
+        self.max_log_files_var = tk.IntVar(value=self.settings.max_log_files) # New var
+        self.auto_add_space_var = tk.BooleanVar(value=self.settings.auto_add_space) # New var for auto-add space
 
         self._apply_theme()
         self._create_widgets()
         self._populate_audio_devices()
-        self.whisper_engine_type_var.trace_add("write", self._on_whisper_engine_change)
-        self._on_whisper_engine_change()
+        # self.whisper_engine_type_var.trace_add("write", self._on_whisper_engine_change) # REMOVE
+        self._on_whisper_engine_change() # Call once to set initial state (now CLI only)
         self._show_audio_format_tooltip() # Set initial tooltip for audio format
 
     def _apply_theme(self):
@@ -126,29 +126,33 @@ class ConfigWindowView(tk.Toplevel):
         ttk.Button(bottom_button_frame, text="Configure Commands...", command=self.open_command_editor_callback, style='TButton').pack(side=tk.LEFT, padx=(0,5))
 
     def _create_general_tab(self, parent_tab: ttk.Frame):
-        sec_engine = ConfigSection(parent_tab, "Whisper Engine", self.theme_manager)
+        sec_engine = ConfigSection(parent_tab, "Whisper Executable", self.theme_manager) # Renamed section
         engine_frame = sec_engine.get_inner_frame()
-        ttk.Label(engine_frame, text="Engine Type:", style='TLabel').grid(row=0, column=0, sticky=tk.W, padx=(0,5), pady=2)
-        self.engine_type_combo = ttk.Combobox(engine_frame, textvariable=self.whisper_engine_type_var,
-                                         values=WHISPER_ENGINES, state="readonly", width=20)
-        self.engine_type_combo.grid(row=0, column=1, sticky=tk.EW, pady=2)
+        # ttk.Label(engine_frame, text="Engine Type:", style='TLabel').grid(row=0, column=0, sticky=tk.W, padx=(0,5), pady=2) # REMOVE
+        # self.engine_type_combo = ttk.Combobox(engine_frame, textvariable=self.whisper_engine_type_var, # REMOVE
+                                         # values=WHISPER_ENGINES, state="readonly", width=20) # REMOVE
+        # self.engine_type_combo.grid(row=0, column=1, sticky=tk.EW, pady=2) # REMOVE
+        
         self.exec_path_label = ttk.Label(engine_frame, text="Executable Path:", style='TLabel')
-        self.exec_path_label.grid(row=1, column=0, sticky=tk.W, padx=(0,5), pady=2)
+        # Grid at row 0 as engine type is removed
+        self.exec_path_label.grid(row=0, column=0, sticky=tk.W, padx=(0,5), pady=2)
         self.exec_path_entry_frame = ttk.Frame(engine_frame, style='TFrame')
-        self.exec_path_entry_frame.grid(row=1, column=1, sticky=tk.EW, pady=2)
+        self.exec_path_entry_frame.grid(row=0, column=1, sticky=tk.EW, pady=2) # Grid at row 0
         self.exec_path_entry = ttk.Entry(self.exec_path_entry_frame, textvariable=self.whisper_executable_var)
         self.exec_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
         self.exec_path_browse_btn = ttk.Button(self.exec_path_entry_frame, text="Browse...", command=self._browse_whisper_executable, style='TButton')
         self.exec_path_browse_btn.pack(side=tk.LEFT)
-        self.fw_model_label = ttk.Label(engine_frame, text="Faster-Whisper Model:", style='TLabel')
-        self.fw_model_label.grid(row=2, column=0, sticky=tk.W, padx=(0,5), pady=2)
-        self.fw_model_entry_frame = ttk.Frame(engine_frame, style='TFrame')
-        self.fw_model_entry_frame.grid(row=2, column=1, sticky=tk.EW, pady=2)
-        self.fw_model_combo = ttk.Combobox(self.fw_model_entry_frame, textvariable=self.faster_whisper_model_name_var,
-                                           values=FASTER_WHISPER_MODELS, width=25)
-        self.fw_model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
-        self.fw_model_manage_btn = ttk.Button(self.fw_model_entry_frame, text="Manage...", command=self._manage_fw_models_ui, style='TButton')
-        self.fw_model_manage_btn.pack(side=tk.LEFT)
+        
+        # Remove Faster-Whisper model related UI
+        # self.fw_model_label = ttk.Label(engine_frame, text="Faster-Whisper Model:", style='TLabel') # REMOVE
+        # self.fw_model_label.grid(row=2, column=0, sticky=tk.W, padx=(0,5), pady=2) # REMOVE
+        # self.fw_model_entry_frame = ttk.Frame(engine_frame, style='TFrame') # REMOVE
+        # self.fw_model_entry_frame.grid(row=2, column=1, sticky=tk.EW, pady=2) # REMOVE
+        # self.fw_model_combo = ttk.Combobox(self.fw_model_entry_frame, textvariable=self.faster_whisper_model_name_var, # REMOVE
+                                           # values=FASTER_WHISPER_MODELS, width=25) # REMOVE
+        # self.fw_model_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5)) # REMOVE
+        # self.fw_model_manage_btn = ttk.Button(self.fw_model_entry_frame, text="Manage...", command=self._manage_fw_models_ui, style='TButton') # REMOVE
+        # self.fw_model_manage_btn.pack(side=tk.LEFT) # REMOVE
         engine_frame.columnconfigure(1, weight=1)
 
         sec_export = ConfigSection(parent_tab, "File Export", self.theme_manager)
@@ -216,9 +220,12 @@ class ConfigWindowView(tk.Toplevel):
 
         auto_paste_frame = ttk.Frame(feedback_frame, style='TFrame', padding=(0,10,0,0))
         auto_paste_frame.pack(fill=tk.X, anchor=tk.W)
-        ttk.Checkbutton(auto_paste_frame, text="Auto-Paste After Transcription", variable=self.auto_paste_var, style='TCheckbutton').pack(side=tk.LEFT, anchor=tk.W)
-        ttk.Label(auto_paste_frame, text="Delay (s):", style='TLabel').pack(side=tk.LEFT, padx=(15,5))
-        ttk.Entry(auto_paste_frame, textvariable=self.auto_paste_delay_var, width=5).pack(side=tk.LEFT)
+        ttk.Checkbutton(auto_paste_frame, text="Auto-Paste After Transcription", variable=self.auto_paste_var, style='TCheckbutton').pack(side=tk.LEFT, anchor=tk.W, padx=(0,10))
+        
+        ttk.Label(auto_paste_frame, text="Delay (s):", style='TLabel').pack(side=tk.LEFT, padx=(5,5))
+        ttk.Entry(auto_paste_frame, textvariable=self.auto_paste_delay_var, width=5).pack(side=tk.LEFT, padx=(0,20))
+
+        ttk.Checkbutton(auto_paste_frame, text="Auto-Add Space After Transcription", variable=self.auto_add_space_var, style='TCheckbutton').pack(side=tk.LEFT, anchor=tk.W)
 
     def _create_status_indication_tab(self, parent_tab: ttk.Frame): # Content was missing, now added
         sec_edge_bar = ConfigSection(parent_tab, "Screen Edge Status Bar (Windows Only)", self.theme_manager)
@@ -267,6 +274,12 @@ class ConfigWindowView(tk.Toplevel):
         ttk.Combobox(log_level_frame, textvariable=self.logging_level_var, values=LOG_LEVELS,
                      state="readonly", width=12).pack(side=tk.LEFT, padx=(0,15))
         ttk.Checkbutton(log_level_frame, text="Log to File", variable=self.log_to_file_var, style='TCheckbutton').pack(side=tk.LEFT)
+
+        log_file_management_frame = ttk.Frame(log_frame, style='TFrame', padding=(0,5,0,0))
+        log_file_management_frame.pack(fill=tk.X, anchor=tk.W)
+        ttk.Label(log_file_management_frame, text="Max Log Files to Keep:", style='TLabel').pack(side=tk.LEFT, padx=(0,5))
+        ttk.Spinbox(log_file_management_frame, textvariable=self.max_log_files_var, from_=1, to=100, increment=1, width=5).pack(side=tk.LEFT)
+        ttk.Label(log_file_management_frame, text="(1-100, 0 for unlimited)", style='TLabel').pack(side=tk.LEFT, padx=(5,0)) # Tooltip/hint
         
         sec_versioning = ConfigSection(parent_tab, "File Versioning (Backups)", self.theme_manager)
         ver_frame = sec_versioning.get_inner_frame()
@@ -367,33 +380,35 @@ class ConfigWindowView(tk.Toplevel):
         self.audio_format_tooltip_var.set(tooltip_text)
 
     def _on_whisper_engine_change(self, *args):
-        engine_type = self.whisper_engine_type_var.get()
-        is_executable_engine = (engine_type == WHISPER_ENGINES[0])
-        is_fw_engine = (engine_type == WHISPER_ENGINES[1])
-        fw_available = self.check_fw_available()
+        # engine_type = self.whisper_engine_type_var.get() # REMOVE
+        # Always CLI engine now
+        is_executable_engine = True 
+        # is_fw_engine = False # REMOVE
+        # fw_available = False # REMOVE
 
-        for widget in [self.exec_path_label, self.exec_path_entry_frame]: widget.grid() if is_executable_engine else widget.grid_remove()
-        for widget in [self.fw_model_label, self.fw_model_entry_frame]: widget.grid() if is_fw_engine else widget.grid_remove()
+        # Ensure Executable Path widgets are always visible
+        if hasattr(self, 'exec_path_label') and hasattr(self, 'exec_path_entry_frame'):
+            for widget in [self.exec_path_label, self.exec_path_entry_frame]: 
+                if widget: widget.grid() 
         
-        if self.cli_beep_checkbox: # Check if it exists
-            self.cli_beep_checkbox.config(state=tk.NORMAL if is_executable_engine else tk.DISABLED)
+        # Ensure FW model widgets are always hidden (they should be removed, but this is safer if references remain)
+        if hasattr(self, 'fw_model_label') and hasattr(self, 'fw_model_entry_frame'):
+            for widget in [self.fw_model_label, self.fw_model_entry_frame]: 
+                if widget: widget.grid_remove()
+        
+        if hasattr(self, 'cli_beep_checkbox') and self.cli_beep_checkbox: # Check if it exists
+            self.cli_beep_checkbox.config(state=tk.NORMAL) # Always enabled as CLI is only option
 
-        if is_fw_engine:
-            self.fw_model_combo.config(state="normal" if fw_available else tk.DISABLED)
-            self.fw_model_manage_btn.config(state=tk.NORMAL if fw_available else tk.DISABLED)
-            if not hasattr(self, 'fw_warning_label'):
-                self.fw_warning_label = ttk.Label(self.fw_model_label.master, text="faster-whisper library not installed!", foreground="red", style='TLabel')
-            if not fw_available: self.fw_warning_label.grid(row=self.fw_model_label.grid_info()['row'] + 1, column=0, columnspan=2, sticky=tk.W, pady=(0,5))
-            else: self.fw_warning_label.grid_remove()
-        elif hasattr(self, 'fw_warning_label'): self.fw_warning_label.grid_remove()
+        if hasattr(self, 'fw_warning_label') and self.fw_warning_label: 
+            self.fw_warning_label.grid_remove()
+
 
     def _collect_settings_from_ui(self) -> AppSettings:
         s = AppSettings() # Create a new instance to populate
         initial_s = self.initial_settings # For fallbacks
 
-        s.whisper_engine_type = self.whisper_engine_type_var.get()
+        s.whisper_engine_type = WHISPER_ENGINES[0] # Force to "Executable"
         s.whisper_executable = self.whisper_executable_var.get() or initial_s.whisper_executable
-        s.faster_whisper_model_name = self.faster_whisper_model_name_var.get() or initial_s.faster_whisper_model_name
         s.export_folder = self.export_folder_var.get() or initial_s.export_folder
         s.hotkey_toggle_record = self.hotkey_toggle_record_var.get() or initial_s.hotkey_toggle_record
         s.hotkey_show_window = self.hotkey_show_window_var.get() or initial_s.hotkey_show_window
@@ -440,6 +455,10 @@ class ConfigWindowView(tk.Toplevel):
         s.clear_text_on_exit = self.clear_text_on_exit_var.get()
         s.close_behavior = self.close_behavior_var.get() or initial_s.close_behavior
         s.ui_theme = self.ui_theme_var.get() or initial_s.ui_theme
+        try: s.max_log_files = int(self.max_log_files_var.get())
+        except ValueError: s.max_log_files = initial_s.max_log_files
+        s.auto_add_space = self.auto_add_space_var.get()
+
 
         # Preserve main window settings not on this dialog by copying from initial_settings
         s.language = initial_s.language
@@ -484,6 +503,7 @@ class ConfigWindowView(tk.Toplevel):
         if not (MIN_ALT_INDICATOR_OFFSET <= new_settings.alt_status_indicator_offset <= MAX_ALT_INDICATOR_OFFSET):
             new_settings.alt_status_indicator_offset = self.initial_settings.alt_status_indicator_offset
         if new_settings.max_backups < 0: new_settings.max_backups = self.initial_settings.max_backups
+        if new_settings.max_log_files < 0: new_settings.max_log_files = self.initial_settings.max_log_files # Allow 0 for unlimited
 
         hotkeys_ok = self.save_config_callback(new_settings)
         if hotkeys_ok:
@@ -498,6 +518,3 @@ class ConfigWindowView(tk.Toplevel):
             if response is True: self._save_configuration_and_close()
             elif response is False: self.destroy()
         else: self.destroy()
-        
-    def _manage_fw_models_ui(self):
-        self.manage_fw_models_cb()
