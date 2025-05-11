@@ -157,9 +157,10 @@ class MainWindowView:
 
     def update_shortcut_display_ui(self):
         current_settings = self.settings_manager.settings # Use current settings
+        ptt_key = current_settings.hotkey_push_to_talk or "[Not Set]"
         toggle_key = current_settings.hotkey_toggle_record or "[Not Set]"
         show_key = current_settings.hotkey_show_window or "[Not Set]"
-        self.shortcut_display_var.set(f"{toggle_key}: Toggle Record\n{show_key}: Show Window")
+        self.shortcut_display_var.set(f"PTT: {ptt_key}\nToggle: {toggle_key}\nShow: {show_key}")
 
     def update_queue_indicator_ui(self, queue_size: int):
         self.queue_indicator_var.set(f"Queue: {queue_size}")
