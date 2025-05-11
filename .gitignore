@@ -1,13 +1,13 @@
-node_modules
+compile-to-exe.bat
+OLD_WhisperR.py
 OldVersions
-__pycache__
 TestTemp
+node_modules
+__pycache__
 dist
 build
 prompt.json
 config.json
-compile-to-exe.bat
 commands.json
 icon.png
 .gitignore
-OLD_WhisperR.py
