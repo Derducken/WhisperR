@@ -429,7 +429,8 @@ class WhisperRApp:
         self.root.minsize(650, 600)
         self._set_app_icon()
 
-        self.transcription_service = TranscriptionService(self.settings_manager, self.root, self.settings_manager)
+        # Updated TranscriptionService instantiation
+        self.transcription_service = TranscriptionService(self.settings_manager, self.root)
         self.audio_service = AudioService(self.settings_manager, self.root, self.transcription_service) 
         self.hotkey_manager = HotkeyManager(self.root) 
 
@@ -793,6 +794,11 @@ class WhisperRApp:
         self.settings_manager.settings = new_settings_from_dialog
         self.settings = self.settings_manager.settings 
 
+        # Re-initialize transcription engine if its type changed
+        if old_settings.whisper_engine_type != self.settings.whisper_engine_type:
+            log_essential(f"Whisper engine type changed from '{old_settings.whisper_engine_type}' to '{self.settings.whisper_engine_type}'. Re-initializing service.")
+            self.transcription_service.reinitialize_engine()
+        
         hotkeys_ok = self.hotkey_manager.update_hotkeys(
             self.settings.hotkey_toggle_record, 
             self.settings.hotkey_show_window,
@@ -801,7 +807,10 @@ class WhisperRApp:
         self.main_view.update_shortcut_display_ui()
         if old_settings.selected_audio_device_index != self.settings.selected_audio_device_index:
             self.audio_service.update_selected_audio_device(self.settings.selected_audio_device_index)
+        
+        # Note: If library engine is re-added, model change logic for it would go here or in TranscriptionService.reinitialize_engine
         log_debug("Faster-Whisper related model change check skipped as it's CLI-only now.")
+        
         if self.status_bar_win_manager:
             if old_settings.status_bar_enabled != self.settings.status_bar_enabled or \
                old_settings.status_bar_position != self.settings.status_bar_position or \

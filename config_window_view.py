@@ -82,6 +82,10 @@ class ConfigWindowView(tk.Toplevel):
         self.audio_format_tooltip_var = tk.StringVar() 
         self.max_log_files_var = tk.IntVar(value=self.settings.max_log_files) 
         self.auto_add_space_var = tk.BooleanVar(value=self.settings.auto_add_space)
+        
+        # Variable for Whisper Engine Type
+        self.whisper_engine_type_var = tk.StringVar(value=self.settings.whisper_engine_type)
+
 
         self._apply_theme()
         self._create_widgets()
@@ -121,17 +125,35 @@ class ConfigWindowView(tk.Toplevel):
         ttk.Button(bottom_button_frame, text="Configure Commands...", command=self.open_command_editor_callback, style='TButton').pack(side=tk.LEFT, padx=(0,5))
 
     def _create_general_tab(self, parent_tab: ttk.Frame):
-        sec_engine = ConfigSection(parent_tab, "Whisper Executable", self.theme_manager) 
+        sec_engine = ConfigSection(parent_tab, "Transcription Engine & Settings", self.theme_manager) 
         engine_frame = sec_engine.get_inner_frame()
         
+        # Engine Selection Combobox
+        ttk.Label(engine_frame, text="Transcription Engine:", style='TLabel').grid(row=0, column=0, sticky=tk.W, padx=(0,5), pady=(2,5))
+        self.engine_combobox = ttk.Combobox(engine_frame, textvariable=self.whisper_engine_type_var,
+                                            values=WHISPER_ENGINES, state="readonly", width=30)
+        self.engine_combobox.grid(row=0, column=1, sticky=tk.EW, pady=(2,5), columnspan=2) # Span to align
+        self.engine_combobox.bind("<<ComboboxSelected>>", self._on_whisper_engine_change)
+
+        # Executable Path (conditionally shown)
         self.exec_path_label = ttk.Label(engine_frame, text="Executable Path:", style='TLabel')
-        self.exec_path_label.grid(row=0, column=0, sticky=tk.W, padx=(0,5), pady=2)
+        self.exec_path_label.grid(row=1, column=0, sticky=tk.W, padx=(0,5), pady=2)
         self.exec_path_entry_frame = ttk.Frame(engine_frame, style='TFrame')
-        self.exec_path_entry_frame.grid(row=0, column=1, sticky=tk.EW, pady=2) 
+        self.exec_path_entry_frame.grid(row=1, column=1, sticky=tk.EW, pady=2, columnspan=2) 
         self.exec_path_entry = ttk.Entry(self.exec_path_entry_frame, textvariable=self.whisper_executable_var)
         self.exec_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
         self.exec_path_browse_btn = ttk.Button(self.exec_path_entry_frame, text="Browse...", command=self._browse_whisper_executable, style='TButton')
         self.exec_path_browse_btn.pack(side=tk.LEFT)
+        
+        # Placeholder for future library-specific model settings (e.g., Faster Whisper model path/selection)
+        # These would be created here but managed (grid/grid_remove) by _on_whisper_engine_change
+        # Example:
+        # self.fw_model_label = ttk.Label(engine_frame, text="Library Model:", style='TLabel')
+        # self.fw_model_entry_frame = ttk.Frame(engine_frame, style='TFrame')
+        # self.fw_model_entry = ttk.Entry(self.fw_model_entry_frame, ...) # Or Combobox
+        # self.fw_model_browse_btn = ttk.Button(self.fw_model_entry_frame, ...)
+        # self.fw_warning_label = ttk.Label(engine_frame, text="Library engine requires specific dependencies.", style='Warning.TLabel')
+
         engine_frame.columnconfigure(1, weight=1)
 
         sec_export = ConfigSection(parent_tab, "File Export", self.theme_manager)
@@ -376,23 +398,41 @@ class ConfigWindowView(tk.Toplevel):
         self.audio_format_tooltip_var.set(tooltip_text)
 
     def _on_whisper_engine_change(self, *args):
-        is_executable_engine = True 
+        selected_engine_name = self.whisper_engine_type_var.get()
+        is_executable_engine = (selected_engine_name == WHISPER_ENGINES[0]) # "Executable (Whisper CLI)"
+        # is_library_engine = (selected_engine_name == WHISPER_ENGINES[1]) # Example for "Library (Faster Whisper)"
+
+        # Manage visibility of Executable Path widgets
         if hasattr(self, 'exec_path_label') and hasattr(self, 'exec_path_entry_frame'):
-            for widget in [self.exec_path_label, self.exec_path_entry_frame]: 
-                if widget: widget.grid() 
-        if hasattr(self, 'fw_model_label') and hasattr(self, 'fw_model_entry_frame'):
-            for widget in [self.fw_model_label, self.fw_model_entry_frame]: 
-                if widget: widget.grid_remove()
-        if hasattr(self, 'cli_beep_checkbox') and self.cli_beep_checkbox: 
-            self.cli_beep_checkbox.config(state=tk.NORMAL) 
-        if hasattr(self, 'fw_warning_label') and self.fw_warning_label: 
-            self.fw_warning_label.grid_remove()
+            if is_executable_engine:
+                self.exec_path_label.grid()
+                self.exec_path_entry_frame.grid()
+            else:
+                self.exec_path_label.grid_remove()
+                self.exec_path_entry_frame.grid_remove()
+        
+        # Manage visibility of CLI Beep checkbox
+        if hasattr(self, 'cli_beep_checkbox') and self.cli_beep_checkbox:
+            self.cli_beep_checkbox.config(state=tk.NORMAL if is_executable_engine else tk.DISABLED)
+
+        # Placeholder: Manage visibility for future library-specific settings
+        # Example for a hypothetical Faster Whisper model selection UI:
+        # if hasattr(self, 'fw_model_label') and hasattr(self, 'fw_model_entry_frame'):
+        #     if is_library_engine:
+        #         self.fw_model_label.grid(row=2, column=0, sticky=tk.W, padx=(0,5), pady=2) # Adjust row as needed
+        #         self.fw_model_entry_frame.grid(row=2, column=1, sticky=tk.EW, pady=2, columnspan=2)
+        #         if hasattr(self, 'fw_warning_label'): self.fw_warning_label.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(5,0))
+        #     else:
+        #         self.fw_model_label.grid_remove()
+        #         self.fw_model_entry_frame.grid_remove()
+        #         if hasattr(self, 'fw_warning_label'): self.fw_warning_label.grid_remove()
+        pass # Add more logic here if other engines are added with their own UI elements
 
     def _collect_settings_from_ui(self) -> AppSettings:
         s = AppSettings() 
         initial_s = self.initial_settings 
 
-        s.whisper_engine_type = WHISPER_ENGINES[0] 
+        s.whisper_engine_type = self.whisper_engine_type_var.get() or initial_s.whisper_engine_type
         s.whisper_executable = self.whisper_executable_var.get() or initial_s.whisper_executable
         s.export_folder = self.export_folder_var.get() or initial_s.export_folder
         s.hotkey_toggle_record = self.hotkey_toggle_record_var.get() or initial_s.hotkey_toggle_record

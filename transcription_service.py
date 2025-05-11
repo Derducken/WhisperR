@@ -7,39 +7,189 @@ import time
 import os
 import shutil
 from pathlib import Path
-from typing import Optional, Callable, List, Dict, Any, Tuple # <--- ENSURE Tuple IS HERE
+from typing import Optional, Callable, List, Dict, Any, Tuple 
+from abc import ABC, abstractmethod # Added for TranscriptionEngine
 from app_logger import get_logger, log_essential, log_error, log_extended, log_debug, log_warning
-# WHISPER_ENGINES will likely be simplified or removed from constants later
-from constants import AUDIO_QUEUE_SENTINEL, WHISPER_ENGINES 
-from settings_manager import AppSettings, CommandEntry # For type hinting
+from constants import AUDIO_QUEUE_SENTINEL, WHISPER_ENGINES
+from settings_manager import AppSettings, CommandEntry, SettingsManager # Added SettingsManager for type hint
 # from whisper_lib_integration import FasterWhisperLib, FASTER_WHISPER_AVAILABLE # REMOVE
 
+
+class TranscriptionEngine(ABC):
+    def __init__(self, settings_manager_instance: SettingsManager, root_tk_instance: tk.Tk):
+        self.settings_manager = settings_manager_instance
+        self.root = root_tk_instance
+
+    @abstractmethod
+    def transcribe(self, audio_path: Path, current_settings: AppSettings, prompt: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Transcribes the audio file.
+        Returns: (transcribed_text, error_message)
+        """
+        pass
+
+    @abstractmethod
+    def get_name(self) -> str:
+        """Returns a user-friendly name for this engine."""
+        pass
+
+class CliWhisperEngine(TranscriptionEngine):
+    def __init__(self, settings_manager_instance: SettingsManager, root_tk_instance: tk.Tk):
+        super().__init__(settings_manager_instance, root_tk_instance)
+
+    def get_name(self) -> str:
+        return WHISPER_ENGINES[0] # "Executable (Whisper CLI)"
+
+    def transcribe(self, audio_path: Path, current_settings: AppSettings, prompt: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+        """Returns (transcribed_text, error_message)"""
+        whisper_exec = Path(current_settings.whisper_executable)
+        if not whisper_exec.exists() or not whisper_exec.is_file():
+            msg = f"Whisper executable not found or is not a file: {whisper_exec}"
+            log_error(msg)
+            # Use self.root from the base class for messagebox
+            self.root.after(0, lambda: messagebox.showerror("Whisper CLI Error", msg, parent=self.root))
+            return None, msg
+
+        export_dir = Path(current_settings.export_folder)
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        out_txt_filename = audio_path.stem + ".txt"
+        out_txt_filepath = export_dir / out_txt_filename
+
+        command = [
+            str(whisper_exec),
+            str(audio_path),
+            "--model", current_settings.model,
+            "--language", current_settings.language,
+            "--output_format", "txt",
+            "--output_dir", str(export_dir)
+        ]
+        
+        # Use the passed prompt, not self.settings_manager.prompt directly in engine
+        if prompt:
+            if '"' in prompt and "'" not in prompt:
+                command.extend(["--initial_prompt", f"'{prompt}'"])
+            elif "'" in prompt and '"' not in prompt:
+                command.extend(["--initial_prompt", f'"{prompt}"'])
+            else:
+                command.extend(["--initial_prompt", prompt])
+
+        command.extend(["--task", "translate" if current_settings.translation_enabled else "transcribe"])
+
+        if not current_settings.whisper_cli_beeps_enabled:
+            command.append("--beep_off")
+        
+        log_extended(f"Running Whisper CLI command: {' '.join(command)}")
+        try:
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            result = subprocess.run(
+                command, check=True, capture_output=True, text=True,
+                startupinfo=startupinfo, encoding='utf-8', errors='replace'
+            )
+            
+            if out_txt_filepath.exists():
+                with open(out_txt_filepath, 'r', encoding='utf-8') as f:
+                    transcribed_text = f.read()
+                log_essential(f"Whisper CLI transcription successful for {audio_path.name}.")
+                return transcribed_text, None
+            else:
+                err_msg = f"Whisper CLI output file not found: {out_txt_filepath}.\n" \
+                          f"STDOUT: {result.stdout[:500]}\nSTDERR: {result.stderr[:500]}"
+                log_error(err_msg)
+                return None, err_msg
+
+        except subprocess.CalledProcessError as e:
+            err_msg = f"Whisper CLI error. CMD: '{' '.join(e.cmd)}'.\n" \
+                      f"Return Code: {e.returncode}\n" \
+                      f"Stderr: {e.stderr[:1000]}"
+            log_error(err_msg)
+            return None, err_msg
+        except FileNotFoundError:
+            msg = f"Whisper CLI executable not found: {whisper_exec}"
+            log_error(msg)
+            self.root.after(0, lambda: messagebox.showerror("Whisper CLI Error", msg, parent=self.root))
+            return None, msg
+        except Exception as e_gen:
+            err_msg = f"General error during Whisper CLI transcription: {e_gen}"
+            log_error(err_msg, exc_info=True)
+            return None, err_msg
+
 class TranscriptionService:
-    def __init__(self, settings_ref: AppSettings, root_tk_instance: tk.Tk, settings_manager=None):
-        self.settings = settings_ref
-        self.settings_manager = settings_manager
-        self.root = root_tk_instance # For UI updates, messagebox
+    def __init__(self, settings_manager_instance: SettingsManager, root_tk_instance: tk.Tk): # Changed signature
+        self.settings_manager = settings_manager_instance
+        self.settings = settings_manager_instance.settings # Get AppSettings from SettingsManager
+        self.root = root_tk_instance
 
         self.transcription_queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
         self._stop_worker_event = threading.Event()
         self.is_queue_processing_paused: bool = False
-        self._clear_queue_flag: bool = False # To signal worker to discard items
-        self._is_transcribing_for_ui: bool = False # To update UI status
+        self._clear_queue_flag: bool = False
+        self._is_transcribing_for_ui: bool = False
 
-        # Callbacks to be set by main app
-        self.on_transcription_complete: Optional[Callable[[str, Path], None]] = None # (text, original_audio_path)
-        self.on_transcription_error: Optional[Callable[[Path, str], None]] = None # (audio_path, error_message)
-        self.on_queue_updated: Optional[Callable[[int], None]] = None # (queue_size)
-        self.on_transcribing_status_changed: Optional[Callable[[bool], None]] = None # (is_transcribing)
+        self.on_transcription_complete: Optional[Callable[[str, Path], None]] = None
+        self.on_transcription_error: Optional[Callable[[Path, str], None]] = None
+        self.on_queue_updated: Optional[Callable[[int], None]] = None
+        self.on_transcribing_status_changed: Optional[Callable[[bool], None]] = None
 
-        # Command execution related
-        self.commands_list: List[CommandEntry] = [] # To be updated by main app
+        self.commands_list: List[CommandEntry] = []
 
-        # Whisper lib integration - REMOVED
-        # self.faster_whisper_instance: Optional[FasterWhisperLib] = None
-        # if FASTER_WHISPER_AVAILABLE:
-        #     self.faster_whisper_instance = FasterWhisperLib(self.settings)
+        # Engine selection
+        self.selected_engine: Optional[TranscriptionEngine] = None
+        self._initialize_engine()
+
+    def _initialize_engine(self):
+        # For now, only CLI engine is available. This map can be expanded later.
+        available_engines: Dict[str, Type[TranscriptionEngine]] = {
+            WHISPER_ENGINES[0]: CliWhisperEngine,
+            # WHISPER_ENGINES[1]: LibWhisperEngine, # Example for future
+        }
+        
+        chosen_engine_name = self.settings.whisper_engine_type
+        engine_class = available_engines.get(chosen_engine_name)
+
+        if engine_class:
+            try:
+                # Pass settings_manager and root to the engine constructor
+                self.selected_engine = engine_class(self.settings_manager, self.root)
+                log_essential(f"Transcription engine selected: {self.selected_engine.get_name()}")
+            except Exception as e:
+                log_error(f"Failed to initialize engine '{chosen_engine_name}': {e}", exc_info=True)
+                # Fallback or error state if needed
+                if chosen_engine_name != WHISPER_ENGINES[0] and WHISPER_ENGINES[0] in available_engines: # Try CLI as fallback
+                    try:
+                        log_warning(f"Falling back to CLI engine.")
+                        self.selected_engine = available_engines[WHISPER_ENGINES[0]](self.settings_manager, self.root)
+                        # Update settings to reflect fallback? Or just use it internally? For now, internal.
+                    except Exception as e_fallback:
+                         log_error(f"Failed to initialize fallback CLI engine: {e_fallback}", exc_info=True)
+                         self.selected_engine = None
+                else:
+                    self.selected_engine = None
+        else:
+            log_error(f"Unknown transcription engine selected: {chosen_engine_name}. No engine loaded.")
+            self.selected_engine = None
+
+        if not self.selected_engine:
+            # Consider showing a messagebox error to the user if no engine could be loaded
+            self.root.after(0, lambda: messagebox.showerror("Engine Error",
+                             f"Could not load transcription engine: {chosen_engine_name}.\n"
+                             "Please check configuration or try CLI engine.", parent=self.root))
+
+    def reinitialize_engine(self):
+        """Re-initializes the transcription engine based on current settings."""
+        log_essential("Re-initializing transcription engine...")
+        # Update self.settings reference in case it was changed externally (e.g. new AppSettings object)
+        self.settings = self.settings_manager.settings 
+        self._initialize_engine()
+        # If worker was running with no engine, this might kickstart it if an engine is now available.
+        # If worker was running with an old engine, it will pick up the new one on its next loop iteration
+        # (or rather, the service now has a new engine instance).
 
     def set_callbacks(self, on_transcription_complete, on_transcription_error,
                       on_queue_updated, on_transcribing_status_changed):
@@ -125,17 +275,20 @@ class TranscriptionService:
 
 
     def _transcription_worker_loop(self):
-        # is_fw_model_loaded = False # REMOVED
-        # if self.settings.whisper_engine_type == WHISPER_ENGINES[1] and self.faster_whisper_instance: # REMOVED
-            # is_fw_model_loaded = self.faster_whisper_instance.load_model() # Pre-load model # REMOVED
-            # if not is_fw_model_loaded: # REMOVED
-                 # log_error("Failed to pre-load faster-whisper model. Transcription with library may fail.") # REMOVED
-                 # Optionally switch to CLI mode here if desired as a fallback, # REMOVED
-                 # or let it try to load again per file. # REMOVED
-        log_debug("Transcription worker loop started (CLI-only mode).")
+        # Ensure engine is re-initialized if settings change (e.g. via config window)
+        # This might be better handled by main_app calling a reinitialize_engine method
+        # on TranscriptionService after settings are saved. For now, it's init-time only.
+
+        log_debug(f"Transcription worker loop started. Engine: {self.selected_engine.get_name() if self.selected_engine else 'None'}")
 
         while not self._stop_worker_event.is_set():
             try:
+                if not self.selected_engine:
+                    log_warning("No transcription engine loaded. Worker pausing.")
+                    if self._is_transcribing_for_ui: self._notify_transcribing_status(False)
+                    time.sleep(1)
+                    continue
+
                 if self.is_queue_processing_paused:
                     if self._is_transcribing_for_ui: # Ensure status is updated if paused mid-transcription
                         self._notify_transcribing_status(False)
@@ -180,15 +333,19 @@ class TranscriptionService:
                 transcribed_text = None
                 error_msg = None
 
-                # Always use CLI method now
-                log_debug(f"Processing {audio_filepath.name} with CLI method.")
-                transcribed_text, error_msg = self._transcribe_with_cli(audio_filepath)
+                # Use selected engine
+                log_debug(f"Processing {audio_filepath.name} with {self.selected_engine.get_name()} engine.")
+                # Pass current settings and prompt to the engine's transcribe method
+                current_app_settings = self.settings_manager.settings 
+                current_prompt = self.settings_manager.prompt
+                transcribed_text, error_msg = self.selected_engine.transcribe(
+                    audio_filepath, current_app_settings, current_prompt
+                )
 
                 # Post-transcription
                 if transcribed_text is not None: # Success
                     parsed_text = self._parse_and_clean_transcription_text(transcribed_text)
                     
-                    # Auto-add space if enabled and text exists and doesn't already end with a space
                     if self.settings_manager.settings.auto_add_space and parsed_text and not parsed_text.endswith(' '):
                         parsed_text += ' '
                         log_debug("Auto-added space to transcription.")
@@ -196,7 +353,6 @@ class TranscriptionService:
                     if self.on_transcription_complete:
                         self.root.after(0, self.on_transcription_complete, parsed_text, audio_filepath)
                     
-                    # Rename original audio file
                     try:
                         new_audio_path = audio_filepath.with_suffix(audio_filepath.suffix + ".transcribed")
                         shutil.move(str(audio_filepath), str(new_audio_path))
@@ -208,118 +364,25 @@ class TranscriptionService:
                         self.root.after(0, self.on_transcription_error, audio_filepath, error_msg or "Unknown transcription error.")
                 
                 self.transcription_queue.task_done()
-                self._notify_queue_updated() # Update after task_done
+                self._notify_queue_updated()
 
-            except Exception as e: # Catchall for unexpected errors in the loop
+            except Exception as e:
                 log_path_str = 'unknown file'
-                if 'audio_filepath' in locals() and audio_filepath is not AUDIO_QUEUE_SENTINEL:
-                    log_path_str = str(audio_filepath)
+                if 'audio_filepath' in locals() and audio_filepath is not AUDIO_QUEUE_SENTINEL: # type: ignore
+                    log_path_str = str(audio_filepath) # type: ignore
                 log_error(f"Critical error in transcription worker for {log_path_str}: {e}", exc_info=True)
                 try:
-                    # Ensure task_done is called if an item was fetched to prevent deadlocks
-                    if 'audio_filepath_str' in locals() and audio_filepath_str is not None:
+                    if 'audio_filepath_str' in locals() and audio_filepath_str is not None: # type: ignore
                          self.transcription_queue.task_done()
-                except ValueError: # If task_done called too many times
+                except ValueError:
                     pass
                 self._notify_transcribing_status(False)
-                time.sleep(1) # Brief pause before retrying loop
+                time.sleep(1)
 
         log_essential("Transcription worker loop has exited.")
         self._notify_transcribing_status(False)
 
-
-    def _transcribe_with_cli(self, audio_path: Path) -> Tuple[Optional[str], Optional[str]]:
-        """Returns (transcribed_text, error_message)"""
-        current_settings = self.settings_manager.settings
-        whisper_exec = Path(current_settings.whisper_executable)
-        if not whisper_exec.exists() or not whisper_exec.is_file():
-            msg = f"Whisper executable not found or is not a file: {whisper_exec}"
-            log_error(msg)
-            self.root.after(0, lambda: messagebox.showerror("Whisper CLI Error", msg, parent=self.root))
-            return None, msg
-
-        export_dir = Path(current_settings.export_folder) # Use current_settings
-        export_dir.mkdir(parents=True, exist_ok=True)
-
-        # Output filename for .txt (Whisper CLI creates this)
-        # Ensure it matches how Whisper CLI names it: audio_path_stem.txt
-        out_txt_filename = audio_path.stem + ".txt"
-        out_txt_filepath = export_dir / out_txt_filename
-
-        command = [
-            str(whisper_exec),
-            str(audio_path),
-            "--model", current_settings.model,
-            "--language", current_settings.language,
-            "--output_format", "txt", # We only care about the text for this method
-            "--output_dir", str(export_dir)
-        ]
-        
-        if self.settings_manager and self.settings_manager.prompt: # Get prompt from settings manager
-            # Handle quotes in prompt carefully for CLI
-            prompt_content = self.settings_manager.prompt
-            if '"' in prompt_content and "'" not in prompt_content:
-                command.extend(["--initial_prompt", f"'{prompt_content}'"])
-            elif "'" in prompt_content and '"' not in prompt_content:
-                command.extend(["--initial_prompt", f'"{prompt_content}"'])
-            else: # Contains both or neither, use as is or complex escape
-                command.extend(["--initial_prompt", prompt_content])
-
-
-        command.extend(["--task", "translate" if current_settings.translation_enabled else "transcribe"])
-
-        if not current_settings.whisper_cli_beeps_enabled:
-            command.append("--beep_off")
-        
-        # Add any other CLI flags based on self.settings as needed
-
-        log_extended(f"Running Whisper CLI command: {' '.join(command)}")
-        try:
-            # Hide console window for subprocess
-            startupinfo = None
-            if os.name == 'nt':
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-            
-            result = subprocess.run(
-                command, check=True, capture_output=True, text=True,
-                startupinfo=startupinfo, encoding='utf-8', errors='replace'
-            )
-            
-            # Whisper CLI should create the .txt file. We need to read it.
-            if out_txt_filepath.exists():
-                with open(out_txt_filepath, 'r', encoding='utf-8') as f:
-                    transcribed_text = f.read()
-                
-                # Optionally delete the .txt file created by CLI if we only want to pass text content
-                # For now, let's keep it as it's in the designated export_folder.
-                # If clear_text_on_exit is true, it will be cleaned up later.
-                
-                log_essential(f"Whisper CLI transcription successful for {audio_path.name}.")
-                return transcribed_text, None
-            else:
-                err_msg = f"Whisper CLI output file not found: {out_txt_filepath}.\n" \
-                          f"STDOUT: {result.stdout[:500]}\nSTDERR: {result.stderr[:500]}"
-                log_error(err_msg)
-                return None, err_msg
-
-        except subprocess.CalledProcessError as e:
-            err_msg = f"Whisper CLI error. CMD: '{' '.join(e.cmd)}'.\n" \
-                      f"Return Code: {e.returncode}\n" \
-                      f"Stderr: {e.stderr[:1000]}" # Limit stderr length
-            log_error(err_msg)
-            return None, err_msg
-        except FileNotFoundError:
-            msg = f"Whisper CLI executable not found: {whisper_exec}"
-            log_error(msg)
-            self.root.after(0, lambda: messagebox.showerror("Whisper CLI Error", msg, parent=self.root))
-            return None, msg
-        except Exception as e_gen:
-            err_msg = f"General error during Whisper CLI transcription: {e_gen}"
-            log_error(err_msg, exc_info=True)
-            return None, err_msg
-
+    # _transcribe_with_cli method is now part of CliWhisperEngine
 
     def _parse_and_clean_transcription_text(self, raw_text: str) -> str:
         """Cleans transcription text based on settings (timestamps, etc.)."""
