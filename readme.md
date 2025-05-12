@@ -4,6 +4,8 @@
 
 A vibe-coded solution enabling dictation in ANY other app. Powered by Whisper.
 
+![WhisperR interface](https://github.com/Derducken/WhisperR/blob/master/WhisperR.jpg)
+
 WhisperR offers ~~two~~ three modes of operation:
 
 - A typical continuous recording mode that can record your voice to a single file, where you start and stop the recording manually. That's optimal for dictating long strings of text, for example when crafting the first draft of an article. In this mode, transcription begins only AFTER you've stopped recording, and processes all your speech in one go. This also gives the Whisper "brains" a larger frame of reference that improves results (more speech = more data to analyze - improved accuracy).
