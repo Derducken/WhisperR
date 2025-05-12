@@ -424,7 +424,24 @@ class TranscriptionService:
             else: # Line does not have a timestamp prefix
                 cleaned_lines.append(line_stripped)
         
-        return "\n".join(cleaned_lines).strip()
+        # 1. Normalize spaces within each individual line/segment first and strip them.
+        #    Also filter out any lines that become empty after stripping.
+        processed_lines = [re.sub(r'\s+', ' ', line).strip() for line in cleaned_lines]
+        processed_lines = [line for line in processed_lines if line] # Remove empty strings
+
+        # 2. Determine how to join these processed lines based on timestamp visibility.
+        # current_settings is already available in this method's scope
+        if current_settings.timestamps_disabled:
+            # If timestamps are hidden, join all parts with a single space
+            # to create a continuous flow of text.
+            final_text = " ".join(processed_lines)
+        else:
+            # If timestamps are visible, preserve the multi-line structure
+            # by joining with newlines.
+            final_text = "\n".join(processed_lines)
+            
+        # 3. Return the final, fully cleaned and stripped text.
+        return final_text.strip()
 
     def execute_command_from_text(self, transcription_text: str):
         """Matches transcription_text against loaded commands and executes action."""
