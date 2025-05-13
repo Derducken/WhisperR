@@ -11,3 +11,4 @@ config.json
 commands.json
 icon.png
 .gitignore
+.clinerules
