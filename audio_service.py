@@ -8,7 +8,8 @@ import time
 import queue
 from pathlib import Path
 from typing import Optional, List, Callable, Tuple, Any
-from app_logger import get_logger, log_essential, log_error, log_extended, log_debug, log_warning 
+from app_logger import get_logger, log_essential, log_error, log_extended, log_debug, log_warning
+from persistent_queue_service import PersistentTaskQueue # Added import
 from constants import (
     AUDIO_QUEUE_SENTINEL, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS,
     AUDIO_DTYPE, AUDIO_BLOCKSIZE,
@@ -29,11 +30,12 @@ log_extended("pydub library integration is currently disabled. MP3/AAC saving wi
 class AudioService:
     PYDUB_AVAILABLE = PYDUB_AVAILABLE # Make module-level variable available as class attribute
 
-    def __init__(self, settings_manager_ref: Any, root_tk_instance: tk.Tk, transcription_service_ref: Optional[Any] = None): # Added transcription_service_ref
+    def __init__(self, settings_manager_ref: Any, root_tk_instance: tk.Tk, persistent_task_queue_ref: PersistentTaskQueue, transcription_service_ref: Optional[Any] = None): # Added persistent_task_queue_ref
         self.settings_manager = settings_manager_ref # Store settings_manager
         self.settings = settings_manager_ref.settings # Keep direct ref, but use settings_manager.settings for dynamic values
         self.root = root_tk_instance # For UI updates (messagebox, after calls)
-        self.transcription_service = transcription_service_ref # Store ref
+        self.persistent_task_queue = persistent_task_queue_ref # Store ref to persistent queue
+        self.transcription_service = transcription_service_ref # Store ref, still needed for queue size logging for now
 
         self.is_recording_active: bool = False # Master recording state (controlled by user)
         self.is_vad_speaking: bool = False   # VAD determined speech
@@ -438,10 +440,17 @@ class AudioService:
             if current_settings.beep_on_save_audio_segment:
                 self.play_beep_sound()
 
-            if self.transcription_service: # Use the reference
-                self.transcription_service.add_to_queue(str(output_filepath))
+            # Add to persistent queue instead of directly to transcription_service's in-memory queue
+            if self.persistent_task_queue:
+                if self.persistent_task_queue.add_task(str(output_filepath)):
+                    log_extended(f"Successfully added {output_filepath.name} to persistent queue.")
+                    # Notify TranscriptionService that there might be new items (optional, if it doesn't poll/reload)
+                    if self.transcription_service and hasattr(self.transcription_service, 'check_for_new_tasks'):
+                        self.transcription_service.check_for_new_tasks() # This method would need to be added
+                else:
+                    log_error(f"Failed to add {output_filepath.name} to persistent queue.")
             else:
-                log_error("TranscriptionService reference not available in AudioService to add to queue.")
+                log_error("PersistentTaskQueue reference not available in AudioService.")
             
             if self.on_audio_segment_saved:
                 self.root.after(0, self.on_audio_segment_saved, output_filepath)

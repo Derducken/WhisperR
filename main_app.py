@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import sys
 import os
+import shutil # Added import for shutil.copy2
 from pathlib import Path
 import threading
 import time
@@ -34,6 +35,7 @@ try:
     from alt_status_indicator import AltStatusIndicator
     from audio_service import AudioService
     from transcription_service import TranscriptionService
+    from persistent_queue_service import PersistentTaskQueue # Added import
 
     from main_window_view import MainWindowView
     from config_window_view import ConfigWindowView
@@ -429,10 +431,13 @@ class WhisperRApp:
         self.root.minsize(650, 600)
         self._set_app_icon()
 
-        # Updated TranscriptionService instantiation
-        self.transcription_service = TranscriptionService(self.settings_manager, self.root)
-        self.audio_service = AudioService(self.settings_manager, self.root, self.transcription_service) 
-        self.hotkey_manager = HotkeyManager(self.root) 
+        # Instantiate Persistent Task Queue
+        self.persistent_task_queue = PersistentTaskQueue(self.user_config_path)
+
+        # Updated service instantiations to include persistent queue reference
+        self.transcription_service = TranscriptionService(self.settings_manager, self.root, self.persistent_task_queue)
+        self.audio_service = AudioService(self.settings_manager, self.root, self.persistent_task_queue, self.transcription_service) # Pass persistent queue here too
+        self.hotkey_manager = HotkeyManager(self.root)
 
         self.status_bar_win_manager: Optional[StatusBarManager] = None
         if WINDOWS_FEATURES_AVAILABLE:
@@ -530,6 +535,8 @@ class WhisperRApp:
         self.main_view.set_button_command("pause_queue", self._action_toggle_pause_queue)
         self.main_view.add_menu_command("file", "Import Prompt...", self._action_import_prompt_file)
         self.main_view.add_menu_command("file", "Export Prompt...", self._action_export_prompt_file)
+        self.main_view.add_menu_command("file", type="separator")
+        self.main_view.add_menu_command("file", "Transcribe Audio File...", self._action_transcribe_manual_file) # Added Manual Transcribe
         self.main_view.add_menu_command("file", type="separator")
         self.main_view.add_menu_command("file", "Open Scratchpad", self._action_open_scratchpad)
         self.main_view.add_menu_command("file", type="separator")
@@ -879,6 +886,57 @@ class WhisperRApp:
                 log_essential(f"Prompt exported to {filepath}")
             except Exception as e:
                 messagebox.showerror("Export Error", f"Failed to export prompt: {e}", parent=self.root)
+
+    def _action_transcribe_manual_file(self):
+        """Opens a file dialog to select an audio file and adds it to the transcription queue."""
+        log_debug("Manual transcribe file action triggered.")
+        # Define supported file types (adjust as needed based on Whisper capabilities)
+        filetypes = (
+            ("Audio Files", "*.wav *.mp3 *.m4a *.aac *.ogg *.flac"),
+            ("Wave files", "*.wav"),
+            ("MP3 files", "*.mp3"),
+            ("All files", "*.*")
+        )
+        
+        filepath_str = filedialog.askopenfilename(
+            title="Select Audio File to Transcribe",
+            filetypes=filetypes,
+            parent=self.root
+        )
+
+        if not filepath_str:
+            log_debug("Manual file selection cancelled.")
+            return
+
+        selected_filepath = Path(filepath_str)
+        export_dir = Path(self.settings.export_folder)
+        export_dir.mkdir(parents=True, exist_ok=True) # Ensure export dir exists
+
+        # Create a unique name for the copied file in the export directory
+        timestamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time()*1000)%1000:03d}"
+        # Sanitize original filename slightly for use in new name
+        original_stem_sanitized = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in selected_filepath.stem)
+        copied_filename = f"manual_{timestamp}_{original_stem_sanitized[:30]}{selected_filepath.suffix}"
+        copied_filepath = export_dir / copied_filename
+
+        try:
+            log_extended(f"Copying selected file '{selected_filepath}' to '{copied_filepath}' for processing.")
+            shutil.copy2(selected_filepath, copied_filepath) # copy2 preserves metadata like modification time
+            log_essential(f"Copied manual file to: {copied_filepath.name}")
+
+            # Add the *copied* file path to the queue using the service's method
+            self.transcription_service.add_to_queue(str(copied_filepath), source="manual_selection")
+            
+            messagebox.showinfo("File Queued", f"'{selected_filepath.name}' was copied and added to the transcription queue.", parent=self.root)
+
+        except Exception as e:
+            log_error(f"Error copying or queuing manual file '{selected_filepath}': {e}", exc_info=True)
+            messagebox.showerror("Error Queuing File", f"Could not queue file:\n{e}", parent=self.root)
+            # Clean up copied file if copy succeeded but queuing failed? Optional.
+            if copied_filepath.exists():
+                try: copied_filepath.unlink()
+                except OSError: pass
+
 
     def _action_delete_session_files_now(self):
         export_dir = Path(self.settings.export_folder)

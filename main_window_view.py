@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, Menu
 from typing import Callable, List, Tuple, Optional # Ensure Optional and Callable are here
-from app_logger import get_logger, log_extended, log_error # Ensure log_error is imported
+from app_logger import get_logger, log_extended, log_error, log_debug # <<< ADDED log_debug
 from constants import DEFAULT_LANGUAGE, DEFAULT_MODEL, EXTENDED_MODEL_OPTIONS, Theme
 from settings_manager import AppSettings, SettingsManager # Import SettingsManager
 from theme_manager import ThemeManager
@@ -24,7 +24,7 @@ class MainWindowView:
         self.clear_text_output_var = tk.BooleanVar(value=current_settings.clear_text_output)
         
         self.shortcut_display_var = tk.StringVar()
-        self.queue_indicator_var = tk.StringVar(value="Queue: 0")
+        self.queue_indicator_var = tk.StringVar(value="Queue: 0") # Initial value
         self.pause_queue_menu_var = tk.BooleanVar(value=False) 
 
         self.is_recording_visual_indicator = False 
@@ -35,7 +35,9 @@ class MainWindowView:
         self.pause_queue_button: Optional[ttk.Button] = None
         self.model_combobox: Optional[ttk.Combobox] = None
         self.language_combobox: Optional[ttk.Combobox] = None
-        self.ok_hide_button: Optional[ttk.Button] = None # New button for OK (Hide Window)
+        self.ok_hide_button: Optional[ttk.Button] = None
+        self.queue_status_label: Optional[ttk.Label] = None # For direct update
+        self.clear_queue_button: Optional[ttk.Button] = None
 
         self._create_widgets()
 
@@ -43,7 +45,7 @@ class MainWindowView:
             self.prompt_text_widget.delete("1.0", tk.END) 
             self.prompt_text_widget.insert("1.0", self.initial_prompt_val)
         
-        self.update_ui_from_settings() # This will now use self.settings_manager.settings
+        self.update_ui_from_settings()
 
     def _create_widgets(self):
         menubar = Menu(self.root)
@@ -67,7 +69,7 @@ class MainWindowView:
         self.language_combobox.pack(side=tk.LEFT)
 
         model_frame = ttk.Frame(top_frame, style='TFrame')
-        model_frame.pack(side=tk.RIGHT, padx=(0, 0)) # Changed side to RIGHT
+        model_frame.pack(side=tk.RIGHT, padx=(0, 0))
         ttk.Label(model_frame, text="Model (CLI/Lib Fallback):", style='TLabel').pack(side=tk.LEFT, padx=(0, 5))
         self.model_combobox = ttk.Combobox(model_frame, textvariable=self.model_var,
                                            values=EXTENDED_MODEL_OPTIONS, width=28)
@@ -76,27 +78,27 @@ class MainWindowView:
         toggle_frame1 = ttk.Frame(self.root, style='TFrame', padding=(10,5))
         toggle_frame1.pack(fill=tk.X)
         ttk.Checkbutton(toggle_frame1, text="Enable Translation", variable=self.translation_var, style='TCheckbutton').pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Checkbutton(toggle_frame1, text="Auto-Pause / Commands (VAD)", variable=self.command_mode_var, style='TCheckbutton').pack(side=tk.RIGHT, padx=(0,0)) # Changed side to RIGHT
+        ttk.Checkbutton(toggle_frame1, text="Auto-Pause / Commands (VAD)", variable=self.command_mode_var, style='TCheckbutton').pack(side=tk.RIGHT, padx=(0,0))
 
         toggle_frame2 = ttk.Frame(self.root, style='TFrame', padding=(10,2,10,5))
         toggle_frame2.pack(fill=tk.X)
         ttk.Checkbutton(toggle_frame2, text="Hide Timestamps (Output)", variable=self.timestamps_disabled_var, style='TCheckbutton').pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Checkbutton(toggle_frame2, text="Clean Metadata (Output)", variable=self.clear_text_output_var, style='TCheckbutton').pack(side=tk.RIGHT, padx=(0,0)) # Changed side to RIGHT
+        ttk.Checkbutton(toggle_frame2, text="Clean Metadata (Output)", variable=self.clear_text_output_var, style='TCheckbutton').pack(side=tk.RIGHT, padx=(0,0))
 
         prompt_label_frame = ttk.Frame(self.root, style='TFrame', padding=(10,10,10,0))
         prompt_label_frame.pack(fill=tk.X)
         ttk.Label(prompt_label_frame, text="Whisper Initial Prompt:", style='TLabel').pack(anchor=tk.W)
         
-        self.prompt_text_widget = tk.Text(self.root, height=8, wrap=tk.WORD, undo=True) # Increased height to 8
+        self.prompt_text_widget = tk.Text(self.root, height=8, wrap=tk.WORD, undo=True)
         self.prompt_text_widget.pack(pady=5, padx=10, fill=tk.X, expand=False)
 
         self.scratchpad_button = ttk.Button(self.root, text="Open Scratchpad")
         self.scratchpad_button.pack(pady=(5, 10), padx=10, fill=tk.X, ipady=8)
 
-        self.ok_hide_button = ttk.Button(self.root, text="OK (Hide Window)") # New button
-        self.ok_hide_button.pack(pady=(0, 10), padx=10, fill=tk.X, ipady=8) # New button packing
+        self.ok_hide_button = ttk.Button(self.root, text="OK (Hide Window)")
+        self.ok_hide_button.pack(pady=(0, 10), padx=10, fill=tk.X, ipady=8)
 
-        self.start_stop_frame = ttk.Frame(self.root, style='TFrame', padding=(10,0,10,0)) # Reduced bottom padding
+        self.start_stop_frame = ttk.Frame(self.root, style='TFrame', padding=(10,0,10,0))
         self.start_stop_frame.pack(fill=tk.X)
         self.start_stop_button = ttk.Button(self.start_stop_frame, text="Start Recording")
         self.start_stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=10)
@@ -104,7 +106,7 @@ class MainWindowView:
         self.recording_indicator_label.pack(side=tk.LEFT, padx=10)
         self.update_recording_indicator_ui()
 
-        bottom_controls_frame = ttk.Frame(self.root, style='TFrame', padding=(10,0,10,10)) # Reduced top padding
+        bottom_controls_frame = ttk.Frame(self.root, style='TFrame', padding=(10,0,10,10))
         bottom_controls_frame.pack(fill=tk.X, side=tk.BOTTOM, anchor=tk.S)
         self.hotkey_display_label = ttk.Label(bottom_controls_frame, textvariable=self.shortcut_display_var,
                                              justify=tk.LEFT, style='TLabel', wraplength=250)
@@ -112,16 +114,19 @@ class MainWindowView:
         
         queue_controls_subframe = ttk.Frame(bottom_controls_frame, style='TFrame')
         queue_controls_subframe.pack(side=tk.RIGHT, anchor=tk.E)
-        self.queue_indicator_label = ttk.Label(queue_controls_subframe, textvariable=self.queue_indicator_var,
+        
+        # Assign to self.queue_status_label so it can be referenced
+        self.queue_status_label = ttk.Label(queue_controls_subframe, textvariable=self.queue_indicator_var,
                                                justify=tk.RIGHT, style='TLabel')
-        self.queue_indicator_label.pack(side=tk.RIGHT, anchor=tk.E, padx=(10, 0))
+        self.queue_status_label.pack(side=tk.RIGHT, anchor=tk.E, padx=(10, 0))
+        
         self.clear_queue_button = ttk.Button(queue_controls_subframe, text="Clear Q", width=8)
         self.clear_queue_button.pack(side=tk.RIGHT, anchor=tk.E, padx=(5, 0))
         self.pause_queue_button = ttk.Button(queue_controls_subframe, text="Pause Q", width=9)
         self.pause_queue_button.pack(side=tk.RIGHT, anchor=tk.E, padx=(5, 0))
 
     def update_ui_from_settings(self):
-        current_settings = self.settings_manager.settings # Use current settings
+        current_settings = self.settings_manager.settings
         self.language_var.set(current_settings.language)
         self.model_var.set(current_settings.model)
         self.translation_var.set(current_settings.translation_enabled)
@@ -141,7 +146,7 @@ class MainWindowView:
         
         if self.recording_indicator_label and self.recording_indicator_label.winfo_exists():
             indicator_color = self.theme_manager.themes[Theme.LIGHT.value]["disabled_fg"] 
-            current_settings = self.settings_manager.settings # Use current settings
+            current_settings = self.settings_manager.settings
             try:
                  current_theme_name = current_settings.ui_theme
                  colors = self.theme_manager.get_current_colors(self.root, current_theme_name)
@@ -149,25 +154,43 @@ class MainWindowView:
             except Exception: pass
 
             if self.is_recording_visual_indicator:
-                if current_settings.command_mode: # Use current settings
+                if current_settings.command_mode:
                     indicator_color = "orange" if vad_is_speaking else "darkkhaki" 
                 else:
                     indicator_color = "red"
             self.recording_indicator_label.config(foreground=indicator_color)
 
     def update_shortcut_display_ui(self):
-        current_settings = self.settings_manager.settings # Use current settings
+        current_settings = self.settings_manager.settings
         ptt_key = current_settings.hotkey_push_to_talk or "[Not Set]"
         toggle_key = current_settings.hotkey_toggle_record or "[Not Set]"
         show_key = current_settings.hotkey_show_window or "[Not Set]"
         self.shortcut_display_var.set(f"PTT: {ptt_key}\nToggle: {toggle_key}\nShow: {show_key}")
 
-    def update_queue_indicator_ui(self, queue_size: int):
-        self.queue_indicator_var.set(f"Queue: {queue_size}")
+    # <<< METHOD SIGNATURE AND LOGIC CHANGED HERE >>>
+    def update_queue_indicator_ui(self, queue_size: int, is_paused: bool):
+        status_parts = []
+        if queue_size > 0:
+            status_parts.append(f"{queue_size}")
+        else:
+            status_parts.append("Empty")
+
+        if is_paused and queue_size > 0: # Only show Paused if there are items
+            status_parts.append("(Paused)")
+        
+        final_text = f"Queue: {' '.join(status_parts)}"
+        self.queue_indicator_var.set(final_text)
+        
+        # Also update the pause button text directly here as it depends on is_paused
+        # and the menu variable. This centralizes the logic.
+        self.update_pause_queue_button_ui(is_paused)
+        log_debug(f"UI Queue Indicator Updated: Size={queue_size}, Paused={is_paused}, Text='{final_text}'")
+
 
     def update_pause_queue_button_ui(self, is_paused: bool):
         if self.pause_queue_button and self.pause_queue_button.winfo_exists():
             self.pause_queue_button.config(text="Resume Q" if is_paused else "Pause Q")
+        # Ensure the menu variable is also kept in sync
         self.pause_queue_menu_var.set(is_paused)
 
     def get_prompt_text(self) -> str:
@@ -181,12 +204,15 @@ class MainWindowView:
             self.prompt_text_widget.insert("1.0", text)
 
     def bind_language_change(self, callback: Callable[[str], None]):
-        self.language_combobox.bind("<<ComboboxSelected>>", lambda e: callback(self.language_var.get()))
+        if self.language_combobox:
+            self.language_combobox.bind("<<ComboboxSelected>>", lambda e: callback(self.language_var.get()))
 
     def bind_model_change(self, callback: Callable[[str], None]):
-        self.model_combobox.bind("<<ComboboxSelected>>", lambda e: callback(self.model_var.get()))
-        self.model_combobox.bind("<Return>", lambda e: callback(self.model_var.get()))
-        self.model_combobox.bind("<FocusOut>", lambda e: callback(self.model_var.get()))
+        if self.model_combobox:
+            self.model_combobox.bind("<<ComboboxSelected>>", lambda e: callback(self.model_var.get()))
+            self.model_combobox.bind("<Return>", lambda e: callback(self.model_var.get())) # Should be fine
+            self.model_combobox.bind("<FocusOut>", lambda e: callback(self.model_var.get()))
+
 
     def bind_toggle_change(self, var_name: str, callback: Callable[[bool], None]):
         var_map = {
@@ -202,7 +228,7 @@ class MainWindowView:
 
     def bind_prompt_change(self, callback: Callable[[str], None]):
         if self.prompt_text_widget:
-            self._prompt_update_job = None
+            self._prompt_update_job: Optional[str] = None # Ensure type hint for _prompt_update_job
             def on_key_release(event):
                 if self._prompt_update_job:
                     self.root.after_cancel(self._prompt_update_job)
@@ -214,7 +240,7 @@ class MainWindowView:
     def set_button_command(self, button_name: str, command: Callable):
         button_map = {
             "scratchpad": self.scratchpad_button,
-            "ok_hide": self.ok_hide_button, # Added new button to map
+            "ok_hide": self.ok_hide_button,
             "start_stop": self.start_stop_button,
             "clear_queue": self.clear_queue_button,
             "pause_queue": self.pause_queue_button,
@@ -237,8 +263,8 @@ class MainWindowView:
         if menu_item_type == "separator":
             target_menu.add_separator()
         elif menu_item_type == "checkbutton":
-            if label is None or command is None:
-                log_error(f"Checkbutton menu item for '{menu_type}' menu is missing label or command.")
+            if label is None: # Command can be None for checkbuttons if only variable is used for state
+                log_error(f"Checkbutton menu item for '{menu_type}' menu is missing label.")
                 return
             target_menu.add_checkbutton(label=label, command=command, variable=kwargs.get("variable"))
         else: 
