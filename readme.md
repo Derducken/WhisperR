@@ -37,7 +37,8 @@ WhisperR offers ~~two~~ three modes of operation:
 Note that this was vibe-coded and tested with Faster Whisper's executable on Windows 11. I'm sharing it here because others might find it useful, too. All similar solutions I personally found on Windows either were tailored more towards transcribing subtitles, or didn't come with an easy-to-use-GUI. Don't blame me if you don't like it, it doesn't work for you, or it makes your PC gain consciousness and decide to kill your cat.
 
 ## Installation
-1. Install [Faster Whisper](https://github.com/SYSTRAN/faster-whisper).
-2. Run WhisperR. Access its configuration and select Faster Whisper's executable.
-3. ...
-4. Profit!
+1. Download [Whisper Standalone Win](https://github.com/Purfview/whisper-standalone-win) (or another Whisper-compatible executable).
+2. Extract it in any folder you like.
+3. Run WhisperR. Access its configuration and select Faster Whisper's executable from the folder where you extracted it.
+4. ...
+5. Profit!
