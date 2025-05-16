@@ -314,7 +314,7 @@ class HotkeyManager:
             return False
         
         try:
-            self._ptt_hotkey_id = keyboard.add_hotkey(self.current_ptt_hk_str, self._on_ptt_pressed_internal, suppress=True)
+            self._ptt_hotkey_id = keyboard.add_hotkey(self.current_ptt_hk_str, self._on_ptt_pressed_internal, suppress=False)
             log_essential(f"PTT hotkey press registered for '{self.current_ptt_hk_str}'.")
             return True
         except Exception as e:
@@ -330,7 +330,7 @@ class HotkeyManager:
             
             if self._parsed_ptt_main_key and not self._ptt_release_hook_id:
                 try:
-                    self._ptt_release_hook_id = keyboard.on_release_key(self._parsed_ptt_main_key, self._on_ptt_released_internal, suppress=True)
+                    self._ptt_release_hook_id = keyboard.on_release_key(self._parsed_ptt_main_key, self._on_ptt_released_internal, suppress=False)
                     log_debug(f"PTT release hook registered for key '{self._parsed_ptt_main_key}'.")
                 except Exception as e:
                     log_error(f"Failed to register PTT release hook for '{self._parsed_ptt_main_key}': {e}")
@@ -1020,6 +1020,22 @@ class WhisperRApp:
             self.root.after(0, self.alt_status_indicator.update_icon_by_state, current_icon_key)
 
 def main():
+    try:
+        import win32event
+        import win32api
+        mutex_name = "Global\\WhisperR_App_Mutex"
+        log_debug(f"Creating mutex with name: {mutex_name}")
+        mutex = win32event.CreateMutex(None, False, mutex_name)
+        last_error = win32api.GetLastError()
+        log_debug(f"Mutex creation result - handle: {mutex}, last_error: {last_error}")
+        if mutex is None or last_error == 183:  # ERROR_ALREADY_EXISTS
+            log_error("Another instance of WhisperR is already running, terminating.")
+            sys.exit(1)
+    except ImportError:
+        log_error("Failed to import win32event or win32api. Cannot check for multiple instances.")
+    except Exception as e:
+        log_error(f"Error creating mutex: {e}")
+
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
