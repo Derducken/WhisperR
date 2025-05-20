@@ -1,9 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import audio_service
-from pathlib import Path
-from typing import Callable, Optional, List, Dict, Any, Tuple # Ensure all are here
-from app_logger import get_logger, log_debug, log_error, log_extended, log_essential # Import helpers
+import json
+from pathlib import Path # Make sure Path is imported
+from typing import Callable, Optional, List, Dict, Any, Tuple 
+import sys 
+
+from app_logger import get_logger, log_debug, log_error, log_extended, log_essential, log_warning 
 from settings_manager import AppSettings
 from theme_manager import ThemeManager
 from ui_components import ConfigSection, create_browse_row
@@ -14,45 +17,47 @@ from constants import (
     UI_THEMES, ALT_INDICATOR_POSITIONS, MIN_ALT_INDICATOR_SIZE, MAX_ALT_INDICATOR_SIZE,
     MIN_ALT_INDICATOR_OFFSET, MAX_ALT_INDICATOR_OFFSET, CLI_MODEL_OPTIONS
 )
+from github_downloader import GitHubReleaseDownloader 
 
 class ConfigWindowView(tk.Toplevel):
-    def __init__(self, tk_parent, app_instance, 
+    def __init__(self, tk_parent, app_instance, # app_instance is WhisperRApp
                  settings: AppSettings,
                  theme_manager: ThemeManager,
                  audio_devices_list: List[Tuple[int, str, str]],
                  save_config_callback: Callable[[AppSettings], bool],
-                 record_hotkey_callback: Callable[[], Optional[str]], # This type hint is for the function passed from main_app
+                 record_hotkey_callback: Callable[[], Optional[str]], 
                  vad_calibrate_callback: Callable[[int], Optional[int]],
                  open_command_editor_callback: Callable,
                  delete_session_files_callback: Callable):
-        
+
         super().__init__(tk_parent)
-        self.app_instance = app_instance # Store app_instance to access hotkey_manager
-        self.settings = settings 
-        self.initial_settings = AppSettings(**vars(settings)) 
+        self.app_instance = app_instance # This is WhisperRApp instance
+        self.settings = settings
+        self.initial_settings = AppSettings(**vars(settings))
         self.theme_manager = theme_manager
         self.current_theme_colors = theme_manager.get_current_colors(tk_parent, settings.ui_theme)
 
         self.audio_devices_list = audio_devices_list
         self.save_config_callback = save_config_callback
-        # The actual callback passed from main_app will be a lambda calling app_instance.hotkey_manager.record_new_hotkey_dialog_managed
-        self.record_hotkey_callback = record_hotkey_callback 
+        self.record_hotkey_callback = record_hotkey_callback
         self.vad_calibrate_callback = vad_calibrate_callback
         self.open_command_editor_callback = open_command_editor_callback
         self.delete_session_files_callback = delete_session_files_callback
 
         self.title("WhisperR Configuration")
-        self.geometry("650x750")
+        self.geometry("650x800") 
         self.transient(tk_parent)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self._on_close_button)
+        
+        self.downloader: Optional[GitHubReleaseDownloader] = None 
 
-        # Tkinter Variables
+        # Tkinter Variables (same as before)
         self.whisper_executable_var = tk.StringVar(value=str(Path(self.settings.whisper_executable)))
         self.export_folder_var = tk.StringVar(value=str(Path(self.settings.export_folder)))
         self.hotkey_toggle_record_var = tk.StringVar(value=self.settings.hotkey_toggle_record)
         self.hotkey_show_window_var = tk.StringVar(value=self.settings.hotkey_show_window)
-        self.hotkey_push_to_talk_var = tk.StringVar(value=self.settings.hotkey_push_to_talk) 
+        self.hotkey_push_to_talk_var = tk.StringVar(value=self.settings.hotkey_push_to_talk)
         self.selected_audio_device_var = tk.StringVar()
         self.silence_duration_var = tk.DoubleVar(value=self.settings.silence_threshold_seconds)
         self.vad_energy_var = tk.IntVar(value=self.settings.vad_energy_threshold)
@@ -79,20 +84,17 @@ class ConfigWindowView(tk.Toplevel):
         self.clear_text_on_exit_var = tk.BooleanVar(value=self.settings.clear_text_on_exit)
         self.close_behavior_var = tk.StringVar(value=self.settings.close_behavior)
         self.ui_theme_var = tk.StringVar(value=self.settings.ui_theme)
-        self.audio_format_tooltip_var = tk.StringVar() 
-        self.max_log_files_var = tk.IntVar(value=self.settings.max_log_files) 
+        self.audio_format_tooltip_var = tk.StringVar()
+        self.max_log_files_var = tk.IntVar(value=self.settings.max_log_files)
         self.auto_add_space_var = tk.BooleanVar(value=self.settings.auto_add_space)
-        
-        # Variable for Whisper Engine Type
         self.whisper_engine_type_var = tk.StringVar(value=self.settings.whisper_engine_type)
-
 
         self._apply_theme()
         self._create_widgets()
         self._populate_audio_devices()
-        self._on_whisper_engine_change() 
+        self._on_whisper_engine_change()
         self._show_audio_format_tooltip()
-
+    
     def _apply_theme(self):
         self.configure(bg=self.current_theme_colors["bg"])
 
@@ -109,53 +111,69 @@ class ConfigWindowView(tk.Toplevel):
         main_notebook.add(tab_general, text=' General & Hotkeys ')
         main_notebook.add(tab_audio, text=' Audio & VAD ')
         main_notebook.add(tab_notifications, text=' Notifications & Output ')
-        main_notebook.add(tab_status_indication, text=' Status Indicators ') 
-        main_notebook.add(tab_advanced, text=' Advanced & App Behavior ') 
-        
+        main_notebook.add(tab_status_indication, text=' Status Indicators ')
+        main_notebook.add(tab_advanced, text=' Advanced & App Behavior ')
+
         self._create_general_tab(tab_general)
         self._create_audio_tab(tab_audio)
         self._create_notifications_tab(tab_notifications)
-        self._create_status_indication_tab(tab_status_indication) 
-        self._create_advanced_tab(tab_advanced) 
-        
+        self._create_status_indication_tab(tab_status_indication)
+        self._create_advanced_tab(tab_advanced)
+
         bottom_button_frame = ttk.Frame(self, style='TFrame', padding=(10,10))
         bottom_button_frame.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Button(bottom_button_frame, text="Save Configuration", command=self._save_configuration_and_close, style='TButton').pack(side=tk.RIGHT, padx=(5,0))
         ttk.Button(bottom_button_frame, text="Cancel", command=self._on_close_button, style='TButton').pack(side=tk.RIGHT)
         ttk.Button(bottom_button_frame, text="Configure Commands...", command=self.open_command_editor_callback, style='TButton').pack(side=tk.LEFT, padx=(0,5))
 
+
     def _create_general_tab(self, parent_tab: ttk.Frame):
-        sec_engine = ConfigSection(parent_tab, "Transcription Engine & Settings", self.theme_manager) 
+        sec_engine = ConfigSection(parent_tab, "Transcription Engine & Settings", self.theme_manager)
         engine_frame = sec_engine.get_inner_frame()
-        
-        # Engine Selection Combobox
+
         ttk.Label(engine_frame, text="Transcription Engine:", style='TLabel').grid(row=0, column=0, sticky=tk.W, padx=(0,5), pady=(2,5))
         self.engine_combobox = ttk.Combobox(engine_frame, textvariable=self.whisper_engine_type_var,
                                             values=WHISPER_ENGINES, state="readonly", width=30)
-        self.engine_combobox.grid(row=0, column=1, sticky=tk.EW, pady=(2,5), columnspan=2) # Span to align
+        self.engine_combobox.grid(row=0, column=1, sticky=tk.EW, pady=(2,5), columnspan=2)
         self.engine_combobox.bind("<<ComboboxSelected>>", self._on_whisper_engine_change)
 
-        # Executable Path (conditionally shown)
         self.exec_path_label = ttk.Label(engine_frame, text="Executable Path:", style='TLabel')
         self.exec_path_label.grid(row=1, column=0, sticky=tk.W, padx=(0,5), pady=2)
         self.exec_path_entry_frame = ttk.Frame(engine_frame, style='TFrame')
-        self.exec_path_entry_frame.grid(row=1, column=1, sticky=tk.EW, pady=2, columnspan=2) 
+        self.exec_path_entry_frame.grid(row=1, column=1, sticky=tk.EW, pady=2, columnspan=2)
         self.exec_path_entry = ttk.Entry(self.exec_path_entry_frame, textvariable=self.whisper_executable_var)
         self.exec_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
         self.exec_path_browse_btn = ttk.Button(self.exec_path_entry_frame, text="Browse...", command=self._browse_whisper_executable, style='TButton')
         self.exec_path_browse_btn.pack(side=tk.LEFT)
-        
-        # Placeholder for future library-specific model settings (e.g., Faster Whisper model path/selection)
-        # These would be created here but managed (grid/grid_remove) by _on_whisper_engine_change
-        # Example:
-        # self.fw_model_label = ttk.Label(engine_frame, text="Library Model:", style='TLabel')
-        # self.fw_model_entry_frame = ttk.Frame(engine_frame, style='TFrame')
-        # self.fw_model_entry = ttk.Entry(self.fw_model_entry_frame, ...) # Or Combobox
-        # self.fw_model_browse_btn = ttk.Button(self.fw_model_entry_frame, ...)
-        # self.fw_warning_label = ttk.Label(engine_frame, text="Library engine requires specific dependencies.", style='Warning.TLabel')
+
+        self.download_engine_button = ttk.Button(
+            engine_frame,
+            text="Download/Update Engine (e.g., Faster Whisper)",
+            command=self._trigger_download_engine, 
+            style='TButton'
+        )
+        self.download_engine_button.grid(row=2, column=0, columnspan=3, pady=(5,0), sticky=tk.EW)
+
+        self.download_status_var = tk.StringVar(value="")
+        self.download_status_label = ttk.Label(
+            engine_frame,
+            textvariable=self.download_status_var,
+            style='Status.TLabel' 
+        )
+        self.download_status_label.grid(row=3, column=0, columnspan=3, pady=(2,0), sticky=tk.W)
+
+        self.download_progress_var = tk.IntVar(value=0)
+        self.download_progressbar = ttk.Progressbar(
+            engine_frame, 
+            orient="horizontal", 
+            length=300, 
+            mode="determinate",
+            variable=self.download_progress_var
+        )
+        self.download_progressbar.grid(row=4, column=0, columnspan=3, pady=(2,5), sticky=tk.EW)
+        self.download_progressbar.grid_remove() 
 
         engine_frame.columnconfigure(1, weight=1)
-
         sec_export = ConfigSection(parent_tab, "File Export", self.theme_manager)
         export_frame = sec_export.get_inner_frame()
         create_browse_row(export_frame, "Export Folder (Audio/Text):", self.export_folder_var, self._browse_export_folder)
@@ -216,7 +234,6 @@ class ConfigWindowView(tk.Toplevel):
         ttk.Label(segment_grid, textvariable=self.audio_format_tooltip_var, style='TLabel', wraplength=300).grid(row=1, column=2, sticky=tk.W, padx=(5,0), columnspan=2)
 
     def _create_notifications_tab(self, parent_tab: ttk.Frame):
-        # Section 1: Transcription Feedback
         sec_feedback = ConfigSection(parent_tab, "Transcription Feedback", self.theme_manager)
         feedback_frame = sec_feedback.get_inner_frame()
         
@@ -229,11 +246,9 @@ class ConfigWindowView(tk.Toplevel):
                                                  variable=self.whisper_cli_beeps_var, style='TCheckbutton')
         self.cli_beep_checkbox.pack(anchor=tk.W, pady=(5,2))
 
-        # Section 2: Output Actions
         sec_actions = ConfigSection(parent_tab, "Output Actions", self.theme_manager)
         actions_frame = sec_actions.get_inner_frame()
 
-        # Auto-Paste options
         auto_paste_sub_frame = ttk.Frame(actions_frame, style='TFrame') 
         auto_paste_sub_frame.pack(fill=tk.X, anchor=tk.W, pady=(0, 5)) 
         ttk.Checkbutton(auto_paste_sub_frame, text="Auto-Paste After Transcription", 
@@ -241,7 +256,6 @@ class ConfigWindowView(tk.Toplevel):
         ttk.Label(auto_paste_sub_frame, text="Delay (s):", style='TLabel').pack(side=tk.LEFT, padx=(5,5))
         ttk.Entry(auto_paste_sub_frame, textvariable=self.auto_paste_delay_var, width=5).pack(side=tk.LEFT)
         
-        # Auto-Add Space option (directly in actions_frame, below auto_paste_sub_frame)
         ttk.Checkbutton(actions_frame, text="Auto-Add Space After Transcription", 
                         variable=self.auto_add_space_var, style='TCheckbutton').pack(anchor=tk.W, pady=2)
 
@@ -357,7 +371,6 @@ class ConfigWindowView(tk.Toplevel):
 
     def _record_hotkey_ui(self, target_var: tk.StringVar):
         self.focus_set(); self.update_idletasks()
-        # This now correctly calls the lambda which calls app_instance.hotkey_manager.record_new_hotkey_dialog_managed
         recorded_hotkey = self.record_hotkey_callback() 
         if recorded_hotkey is not None: target_var.set(recorded_hotkey)
         self.lift()
@@ -399,34 +412,154 @@ class ConfigWindowView(tk.Toplevel):
 
     def _on_whisper_engine_change(self, *args):
         selected_engine_name = self.whisper_engine_type_var.get()
-        is_executable_engine = (selected_engine_name == WHISPER_ENGINES[0]) # "Executable (Whisper CLI)"
-        # is_library_engine = (selected_engine_name == WHISPER_ENGINES[1]) # Example for "Library (Faster Whisper)"
+        is_executable_engine = (selected_engine_name == WHISPER_ENGINES[0]) 
 
-        # Manage visibility of Executable Path widgets
         if hasattr(self, 'exec_path_label') and hasattr(self, 'exec_path_entry_frame'):
             if is_executable_engine:
                 self.exec_path_label.grid()
                 self.exec_path_entry_frame.grid()
+                if hasattr(self, 'download_engine_button'): 
+                    self.download_engine_button.grid()
+                    self.download_status_label.grid()
             else:
                 self.exec_path_label.grid_remove()
                 self.exec_path_entry_frame.grid_remove()
+                if hasattr(self, 'download_engine_button'):
+                    self.download_engine_button.grid_remove()
+                    self.download_status_label.grid_remove()
+                    self.download_progressbar.grid_remove() 
         
-        # Manage visibility of CLI Beep checkbox
         if hasattr(self, 'cli_beep_checkbox') and self.cli_beep_checkbox:
             self.cli_beep_checkbox.config(state=tk.NORMAL if is_executable_engine else tk.DISABLED)
+    
+    # --- Methods for Download Process ---
+    def _trigger_download_engine(self):
+        if self.downloader and self.downloader.thread and self.downloader.thread.is_alive():
+            messagebox.showwarning("Download In Progress", "A download is already in progress.", parent=self)
+            return
 
-        # Placeholder: Manage visibility for future library-specific settings
-        # Example for a hypothetical Faster Whisper model selection UI:
-        # if hasattr(self, 'fw_model_label') and hasattr(self, 'fw_model_entry_frame'):
-        #     if is_library_engine:
-        #         self.fw_model_label.grid(row=2, column=0, sticky=tk.W, padx=(0,5), pady=2) # Adjust row as needed
-        #         self.fw_model_entry_frame.grid(row=2, column=1, sticky=tk.EW, pady=2, columnspan=2)
-        #         if hasattr(self, 'fw_warning_label'): self.fw_warning_label.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(5,0))
-        #     else:
-        #         self.fw_model_label.grid_remove()
-        #         self.fw_model_entry_frame.grid_remove()
-        #         if hasattr(self, 'fw_warning_label'): self.fw_warning_label.grid_remove()
-        pass # Add more logic here if other engines are added with their own UI elements
+        repo_owner_slash_repo = "Purfview/whisper-standalone-win"
+        
+        # !!! CRITICAL: User should verify this keyword based on actual GitHub release asset names !!!
+        asset_keyword_to_find = "faster-whisper-xxl" # Defaulting to XXL as per original intent
+        
+        executable_names_to_search = ['faster-whisper.exe', 'whisper.exe', 'main.exe', 'faster-whisper-xxl.exe']
+
+        app_root_path = Path(".") 
+        try:
+            if hasattr(sys, 'frozen') and sys.frozen: 
+                app_root_path = Path(sys.executable).parent
+            elif self.app_instance and hasattr(self.app_instance, 'app_asset_path'): 
+                # Assuming app_asset_path is a file/dir inside app root, so .parent is app root
+                app_root_path = Path(self.app_instance.app_asset_path).parent 
+            else: 
+                app_root_path = Path(__file__).resolve().parent
+        except Exception as e_path:
+            log_warning(f"Could not determine robust app root path, defaulting to CWD. Error: {e_path}")
+            app_root_path = Path(".")
+
+        default_engines_parent_dir = app_root_path / "whisper_engines"
+        engine_subdir_name = "Faster-Whisper-Engine" 
+        if "xxl" in asset_keyword_to_find.lower(): engine_subdir_name = "Faster-Whisper-XXL"
+        elif "l" in asset_keyword_to_find.lower(): engine_subdir_name = "Faster-Whisper-L"
+        # Add more specific names based on asset_keyword_to_find if needed
+        
+        default_specific_engine_dir = default_engines_parent_dir / engine_subdir_name
+
+        try:
+            default_specific_engine_dir.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            log_warning(f"Could not create parent for initial directory '{default_specific_engine_dir.parent}': {e}")
+
+        self.download_status_var.set(f"Select install directory for {engine_subdir_name}...")
+        self.update_idletasks()
+
+        chosen_target_dir_str = filedialog.askdirectory(
+            title=f"Select Installation Directory for {engine_subdir_name}",
+            initialdir=str(default_specific_engine_dir.resolve()),
+            parent=self
+        )
+
+        if not chosen_target_dir_str:
+            self.download_status_var.set("Download cancelled by user.")
+            self.download_progressbar.grid_remove()
+            return
+
+        target_extraction_dir = Path(chosen_target_dir_str)
+
+        self.download_engine_button.config(state=tk.DISABLED)
+        self.download_progressbar.grid() 
+        self.download_progress_var.set(0)
+
+        self.downloader = GitHubReleaseDownloader(
+            repo_owner_slash_repo=repo_owner_slash_repo,
+            status_callback=self._handle_downloader_status,
+            progress_callback=self._handle_downloader_progress,
+            completion_callback=self._handle_downloader_completion, # Adjusted signature
+            error_callback=self._handle_downloader_error
+        )
+        
+        self.downloader.download_extract_and_find_exe_threaded(
+            asset_keyword=asset_keyword_to_find,
+            target_extraction_dir=target_extraction_dir,
+            executable_names=executable_names_to_search,
+            prefer_windows_in_asset_name=True
+        )
+
+    def _handle_downloader_status(self, message: str):
+        self.after(0, self.download_status_var.set, message)
+
+    def _handle_downloader_progress(self, percent: int):
+        self.after(0, self.download_progress_var.set, percent)
+
+    def _handle_downloader_completion(self, exe_path: Optional[Path], temp_dir_path_used: Optional[Path]): # UPDATED
+        self.after(0, self._finalize_download, exe_path, temp_dir_path_used, None)
+
+    def _handle_downloader_error(self, error_message: str): # UPDATED
+        # In case of error, temp_dir_path_used might still be relevant if the download part succeeded
+        # The downloader's _perform_download_and_extract should pass it if temp_dir_obj_for_download was created.
+        # For simplicity in this handler, we'll assume it might not always have a valid temp_dir_path on error.
+        # The _finalize_download can check if it's None.
+        self.after(0, self._finalize_download, None, None, error_message) # Pass None for temp_dir_path if error is early
+
+    def _finalize_download(self, exe_path: Optional[Path], temp_dir_path_used: Optional[Path], error_message: Optional[str]): # UPDATED
+        self.download_engine_button.config(state=tk.NORMAL)
+        self.download_progressbar.grid_remove()
+        self.download_progress_var.set(0)
+
+        # If a temp directory was used, register it for cleanup, regardless of outcome
+        if temp_dir_path_used and self.app_instance and hasattr(self.app_instance, 'add_temp_dir_to_cleanup_on_exit'):
+            log_debug(f"Registering temporary directory for cleanup on app exit: {temp_dir_path_used}")
+            self.app_instance.add_temp_dir_to_cleanup_on_exit(temp_dir_path_used)
+        elif temp_dir_path_used:
+            log_warning(f"Temporary directory {temp_dir_path_used} was used, but app_instance cannot register it for cleanup (method missing or app_instance None).")
+
+        if error_message: 
+            final_error_msg_for_user = error_message
+            current_status_on_ui = self.download_status_var.get()
+            if error_message not in current_status_on_ui: # Avoid redundant status updates
+                 self.download_status_var.set(f"Failed: {error_message}")
+            
+            log_error(f"Engine download/setup failed. Reported error: {error_message}.")
+            messagebox.showerror("Download Failed",
+                                 f"Could not complete installation.\n"
+                                 f"Reason: {final_error_msg_for_user}\n"
+                                 f"Please check logs for more details.",
+                                 parent=self)
+        elif exe_path and exe_path.exists(): 
+            resolved_exe_path_str = str(exe_path.resolve())
+            self.whisper_executable_var.set(resolved_exe_path_str)
+            final_msg = f"Installation complete. Path set."
+            self.download_status_var.set(final_msg)
+            log_essential(f"Engine installed. Executable: '{resolved_exe_path_str}'")
+            messagebox.showinfo("Download Complete", f"{final_msg}\nLocation: {resolved_exe_path_str}", parent=self)
+        else: # No exe_path and no specific error_message
+             msg = "Download process finished, but the required executable was not found."
+             if temp_dir_path_used: 
+                 msg += " The downloaded archive might not contain the expected files, or extraction failed silently."
+             self.download_status_var.set(msg)
+             log_error(msg)
+             messagebox.showerror("Download Incomplete", msg, parent=self)
 
     def _collect_settings_from_ui(self) -> AppSettings:
         s = AppSettings() 
@@ -529,13 +662,24 @@ class ConfigWindowView(tk.Toplevel):
         hotkeys_ok = self.save_config_callback(new_settings)
         if hotkeys_ok:
             log_essential("Configuration saved from dialog.")
+            if self.downloader and self.downloader.thread and self.downloader.thread.is_alive():
+                self.downloader.cancel_download() 
             self.destroy()
         else:
             messagebox.showerror("Hotkey Error", "One or more hotkeys could not be registered. Please check syntax and try again. Other settings were saved.", parent=self)
 
+
     def _on_close_button(self):
+        if self.downloader and self.downloader.thread and self.downloader.thread.is_alive():
+            if messagebox.askyesno("Download In Progress", 
+                                   "A download is currently in progress. Are you sure you want to cancel it and close the window?", 
+                                   parent=self):
+                self.downloader.cancel_download()
+            else:
+                return 
+
         if self._has_changes():
             response = messagebox.askyesnocancel("Unsaved Changes", "You have unsaved changes. Save them before closing?", parent=self)
-            if response is True: self._save_configuration_and_close()
+            if response is True: self._save_configuration_and_close() 
             elif response is False: self.destroy()
         else: self.destroy()

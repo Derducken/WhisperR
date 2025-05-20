@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import sys
 import os
-import shutil # Added import for shutil.copy2
+import shutil 
 from pathlib import Path
 import threading
 import time
@@ -10,16 +10,15 @@ import traceback
 import platform
 from typing import Callable, Dict, Optional, List, Set, Any, Tuple
 
-import keyboard # Added for inlined HotkeyManager code
+import keyboard 
 
 # --- Project specific imports ---
 try:
-    # Ensure all used logger helper functions are imported
     from app_logger import (
         AppLogger, get_logger, log_error, log_warning,
         log_essential, log_extended, log_debug
     )
-    import app_logger # To initialize LOGGER global
+    import app_logger 
 
     from constants import (
         DEFAULT_HOTKEY_TOGGLE, DEFAULT_HOTKEY_SHOW, APP_ICON_NAME,
@@ -35,10 +34,10 @@ try:
     from alt_status_indicator import AltStatusIndicator
     from audio_service import AudioService
     from transcription_service import TranscriptionService
-    from persistent_queue_service import PersistentTaskQueue # Added import
+    from persistent_queue_service import PersistentTaskQueue 
 
     from main_window_view import MainWindowView
-    from config_window_view import ConfigWindowView
+    from config_window_view import ConfigWindowView # Will pass `self` (WhisperRApp instance) to it
     from scratchpad_view import ScratchpadWindow
     from command_editor_view import CommandEditorWindow
     from vad_calibration_dialog import VADCalibrationDialog
@@ -55,8 +54,7 @@ except ImportError as e:
         print(initial_error_msg, file=sys.stderr)
     sys.exit(1)
 
-# --- Start of Inlined hotkey_manager.py content ---
-
+# --- Start of Inlined hotkey_manager.py content (UNCHANGED from your provided file) ---
 KEYSYM_MAP = {
     "control_l": "ctrl", "control_r": "ctrl",
     "alt_l": "alt", "alt_r": "alt", "meta_l": "alt", "meta_r": "alt",
@@ -337,21 +335,22 @@ class HotkeyManager:
 
     def _on_ptt_released_internal(self, event: Optional[keyboard.KeyboardEvent] = None): 
         if self._ptt_hotkey_pressed_flag:
-            if event and event.name != self._parsed_ptt_main_key:
-                return
-
-            log_debug(f"PTT Released (internal): Main key '{self._parsed_ptt_main_key}' was released.")
-            self._ptt_hotkey_pressed_flag = False
-            if self.ptt_released_cb:
-                self.ptt_released_cb()
-            
-            if self._ptt_release_hook_id:
-                try:
-                    keyboard.unhook_key(self._ptt_release_hook_id) 
-                    log_debug("PTT release hook unregistered.")
-                except Exception as e: 
-                    log_extended(f"Error unhooking PTT release hook: {e}")
-                self._ptt_release_hook_id = None
+            # Check if the released key matches the main PTT key OR if no event is passed (force release)
+            if event is None or (event and event.name == self._parsed_ptt_main_key):
+                log_debug(f"PTT Released (internal): Main key '{self._parsed_ptt_main_key}' was released (or forced).")
+                self._ptt_hotkey_pressed_flag = False
+                if self.ptt_released_cb:
+                    self.ptt_released_cb()
+                
+                if self._ptt_release_hook_id:
+                    try:
+                        keyboard.unhook_key(self._ptt_release_hook_id) 
+                        log_debug("PTT release hook unregistered.")
+                    except Exception as e: 
+                        log_extended(f"Error unhooking PTT release hook: {e}")
+                    self._ptt_release_hook_id = None
+            # else:
+                # log_debug(f"PTT Release (internal): Key '{event.name if event else 'Unknown'}' released, but not the PTT main key '{self._parsed_ptt_main_key}'. Ignoring.")
         
     def _unregister_all_hotkeys(self):
         for key_string, hk_id in list(self._registered_hotkeys.items()):
@@ -406,7 +405,6 @@ class HotkeyManager:
     def record_new_hotkey(parent_tk_window) -> Optional[str]:
         log_warning("Direct static call to HotkeyManager.record_new_hotkey.")
         return HotkeyRecorderDialog.record(parent_tk_window)
-
 # --- End of Inlined hotkey_manager.py content ---
 
 
@@ -431,12 +429,9 @@ class WhisperRApp:
         self.root.minsize(650, 600)
         self._set_app_icon()
 
-        # Instantiate Persistent Task Queue
         self.persistent_task_queue = PersistentTaskQueue(self.user_config_path)
-
-        # Updated service instantiations to include persistent queue reference
         self.transcription_service = TranscriptionService(self.settings_manager, self.root, self.persistent_task_queue)
-        self.audio_service = AudioService(self.settings_manager, self.root, self.persistent_task_queue, self.transcription_service) # Pass persistent queue here too
+        self.audio_service = AudioService(self.settings_manager, self.root, self.persistent_task_queue, self.transcription_service)
         self.hotkey_manager = HotkeyManager(self.root)
 
         self.status_bar_win_manager: Optional[StatusBarManager] = None
@@ -471,12 +466,50 @@ class WhisperRApp:
         self.is_shutting_down = False
         self._ui_transcribing_active = False
         self.is_ptt_active = False 
+        
+        # For deferred cleanup of temporary download directories
+        self._temp_dirs_to_cleanup_on_exit: List[Path] = []
+
 
         self._connect_signals_and_slots()
         self._initialize_services_and_ui()
 
         self.root.protocol("WM_DELETE_WINDOW", self._handle_close_button)
         log_essential("WhisperR initialization complete.")
+
+    def add_temp_dir_to_cleanup_on_exit(self, temp_dir_path: Path):
+        """Registers a temporary directory path to be cleaned up when the app exits."""
+        if temp_dir_path and isinstance(temp_dir_path, Path) and temp_dir_path.is_dir():
+            if temp_dir_path not in self._temp_dirs_to_cleanup_on_exit:
+                self._temp_dirs_to_cleanup_on_exit.append(temp_dir_path)
+                log_debug(f"Added temp directory for cleanup on exit: {temp_dir_path}")
+        else:
+            log_warning(f"Attempted to add invalid temp directory for cleanup: {temp_dir_path}")
+
+    def _cleanup_registered_temp_dirs(self):
+        """Attempts to delete all registered temporary directories."""
+        if not self._temp_dirs_to_cleanup_on_exit:
+            return
+        
+        log_essential("Attempting to clean up temporary download directories...")
+        for temp_dir in list(self._temp_dirs_to_cleanup_on_exit): # Iterate a copy
+            log_debug(f"Cleaning up temporary directory: {temp_dir}")
+            try:
+                if temp_dir.exists() and temp_dir.is_dir(): # Double check
+                    shutil.rmtree(temp_dir, ignore_errors=False) # Change to False to see errors if any
+                    log_extended(f"Successfully removed temporary directory: {temp_dir}")
+                else:
+                    log_debug(f"Temporary directory already removed or not found: {temp_dir}")
+            except PermissionError as e_perm:
+                 log_warning(f"PermissionError cleaning up temp_dir '{temp_dir}' (likely WinError 32, file still in use by OS briefly): {e_perm}. This is usually minor.")
+            except Exception as e:
+                log_error(f"Error cleaning up temporary directory '{temp_dir}': {e}", exc_info=True)
+            
+            # Remove from list whether successful or not to avoid re-trying
+            if temp_dir in self._temp_dirs_to_cleanup_on_exit:
+                self._temp_dirs_to_cleanup_on_exit.remove(temp_dir)
+        log_essential("Finished attempting temporary directory cleanup.")
+
 
     def _set_app_icon(self):
         try:
@@ -491,11 +524,11 @@ class WhisperRApp:
                         self.root.iconbitmap(default=str(ico_path))
                         log_debug(f"Set .ico window icon: {ico_path}")
                         return
-                from PIL import Image, ImageTk
+                from PIL import Image, ImageTk # Keep this import local if PIL is optional or only for this
                 img = Image.open(icon_path_obj)
                 photo_img = ImageTk.PhotoImage(img)
                 self.root.iconphoto(True, photo_img)
-                self.root.app_icon_photo_ref = photo_img
+                self.root.app_icon_photo_ref = photo_img # Keep reference
                 log_debug(f"Set .png window icon: {icon_path_obj}")
             else:
                 log_warning(f"Application icon file '{APP_ICON_NAME}' not found at {icon_path_obj}.")
@@ -503,6 +536,7 @@ class WhisperRApp:
             log_error(f"Error setting application icon: {e}", exc_info=True)
 
     def _connect_signals_and_slots(self):
+        # ... (rest of this method is UNCHANGED) ...
         self.audio_service.set_callbacks(
             on_vad_status_change=self._handle_vad_status_change,
             on_audio_segment_saved=self._handle_audio_segment_saved,
@@ -536,7 +570,7 @@ class WhisperRApp:
         self.main_view.add_menu_command("file", "Import Prompt...", self._action_import_prompt_file)
         self.main_view.add_menu_command("file", "Export Prompt...", self._action_export_prompt_file)
         self.main_view.add_menu_command("file", type="separator")
-        self.main_view.add_menu_command("file", "Transcribe Audio File...", self._action_transcribe_manual_file) # Added Manual Transcribe
+        self.main_view.add_menu_command("file", "Transcribe Audio File...", self._action_transcribe_manual_file) 
         self.main_view.add_menu_command("file", type="separator")
         self.main_view.add_menu_command("file", "Open Scratchpad", self._action_open_scratchpad)
         self.main_view.add_menu_command("file", type="separator")
@@ -549,6 +583,7 @@ class WhisperRApp:
         self.main_view.add_menu_command("queue", "Clear Transcription Queue", self._action_clear_queue)
 
     def _initialize_services_and_ui(self):
+        # ... (rest of this method is UNCHANGED) ...
         log_essential("Initializing services and UI components...")
         self.main_view.update_ui_from_settings()
         self.audio_service.update_selected_audio_device(self.settings.selected_audio_device_index)
@@ -577,6 +612,7 @@ class WhisperRApp:
         self.tray_thread.start() 
 
     def _update_setting_and_save(self, setting_name: str, value: Any, save_type: str = "settings"):
+        # ... (this method is UNCHANGED) ...
         current_value = getattr(self.settings, setting_name, None)
         if current_value != value:
             log_debug(f"Setting '{setting_name}' changed to '{value}' from '{current_value}'. Saving '{save_type}'.")
@@ -588,6 +624,9 @@ class WhisperRApp:
                 self.theme_manager.apply_theme(self.root, value)
                 if self.config_window and self.config_window.winfo_exists():
                     self.theme_manager.apply_theme(self.config_window, value)
+                    # Config window needs its own _apply_theme call if it has complex internal styling
+                    if hasattr(self.config_window, '_apply_theme'): self.config_window._apply_theme()
+
                 if self.scratchpad_window and self.scratchpad_window.winfo_exists():
                      self.theme_manager.apply_theme(self.scratchpad_window, value)
                      if hasattr(self.scratchpad_window, '_apply_theme'): self.scratchpad_window._apply_theme()
@@ -596,17 +635,21 @@ class WhisperRApp:
                     if hasattr(self.command_editor_window, '_apply_theme'): self.command_editor_window._apply_theme()
                 if self.alt_status_indicator: self.alt_status_indicator.update_theme()
 
+
     def _handle_command_mode_change(self, new_value: bool):
+        # ... (this method is UNCHANGED) ...
         self._update_setting_and_save('command_mode', new_value)
         self._update_all_status_indicators()
 
     def _handle_prompt_change(self, new_prompt: str):
+        # ... (this method is UNCHANGED) ...
         if self.settings_manager.prompt != new_prompt: 
             self.settings_manager.prompt = new_prompt
             self.settings_manager.save_prompt()
             log_essential("Prompt updated and saved.")
 
     def _action_toggle_recording_ui(self):
+        # ... (this method is UNCHANGED) ...
         if self.audio_service.is_recording_active:
             self.audio_service.stop_recording()
         else:
@@ -615,10 +658,12 @@ class WhisperRApp:
         self._update_all_status_indicators()
 
     def _action_toggle_recording_external(self):
+        # ... (this method is UNCHANGED) ...
         log_debug("External toggle recording requested.")
         self.root.after(0, self._action_toggle_recording_ui)
 
     def _action_ptt_pressed(self):
+        # ... (this method is UNCHANGED) ...
         log_debug("PTT pressed.")
         if not self.audio_service.is_recording_active:
             self.is_ptt_active = True 
@@ -632,6 +677,7 @@ class WhisperRApp:
             pass
 
     def _action_ptt_released(self):
+        # ... (this method is UNCHANGED) ...
         log_debug("PTT released.")
         if self.is_ptt_active and self.audio_service.is_recording_active:
             self.root.after(0, lambda: [
@@ -642,14 +688,17 @@ class WhisperRApp:
         self.is_ptt_active = False 
 
     def _action_clear_queue(self):
+        # ... (this method is UNCHANGED) ...
         if messagebox.askyesno("Clear Queue", "Remove all pending items from the transcription queue?", parent=self.root):
             self.transcription_service.clear_queue()
 
     def _action_toggle_pause_queue(self):
+        # ... (this method is UNCHANGED) ...
         self.transcription_service.toggle_pause_queue()
         self.main_view.update_pause_queue_button_ui(self.transcription_service.is_queue_processing_paused)
 
     def _action_show_window(self):
+        # ... (this method is UNCHANGED) ...
         log_debug("Show window hotkey action triggered.")
         try:
             if not self.root.winfo_exists(): return
@@ -671,51 +720,68 @@ class WhisperRApp:
             log_error(f"Error in _action_show_window (toggle): {e}", exc_info=True)
 
     def _action_ok_hide_window(self):
+        # ... (this method is UNCHANGED) ...
         log_debug("OK (Hide Window) action triggered.")
         self.root.withdraw()
 
     def _action_hide_window(self):
+        # ... (this method is UNCHANGED) ...
         self.root.withdraw()
-        log_warning("DEBUG: Tray notification on hide is currently disabled.")
+        # log_warning("DEBUG: Tray notification on hide is currently disabled.") # Original comment
 
     def _action_quit_application(self):
         log_essential("Quit action initiated...")
         if self.is_shutting_down: return
         self.is_shutting_down = True
+
         if self.audio_service.is_recording_active:
             self.audio_service.stop_recording(process_final_segment=True)
+        
         self.hotkey_manager.cleanup()
-        self.transcription_service.stop_worker()
+        self.transcription_service.stop_worker() # Stop before potential file deletions
+
         if self.settings.clear_audio_on_exit or self.settings.clear_text_on_exit:
-            self._delete_session_files_on_exit()
-        self.settings_manager.prompt = self.main_view.get_prompt_text()
-        self.settings_manager.save_all()
+            self._delete_session_files_on_exit() # Deletes files from EXPORT folder
+        
+        # Call the new cleanup for temporary DOWNLOAD directories
+        self._cleanup_registered_temp_dirs()
+
+        self.settings_manager.prompt = self.main_view.get_prompt_text() # Save prompt
+        self.settings_manager.save_all() # Save all settings
+
         if self.status_bar_win_manager: self.status_bar_win_manager.destroy_status_bar()
         if self.alt_status_indicator: self.alt_status_indicator.destroy_indicator()
         if self.tray_manager: self.tray_manager.stop_tray_icon() 
+        
         if self.tray_thread and self.tray_thread.is_alive(): 
             self.tray_thread.join(timeout=1.0) 
-        get_logger().close()
+        
+        get_logger().close() # Close logger last before destroying root
+        
         if self.root.winfo_exists():
-            self.root.after(50, self.root.destroy)
+            self.root.after(50, self.root.destroy) # Small delay to allow final ops
         else:
-            sys.exit(0)
+            sys.exit(0) # If root somehow already destroyed
 
     def _handle_close_button(self):
+        # ... (this method is UNCHANGED) ...
         if self.settings.close_behavior == "Minimize to tray": 
             self._action_hide_window()
         else: self._action_quit_application()
 
     def _handle_vad_status_change(self, is_speaking: bool):
+        # ... (this method is UNCHANGED) ...
         self.main_view.update_recording_indicator_ui(self.audio_service.is_recording_active, is_speaking)
         self._update_all_status_indicators()
 
     def _handle_audio_segment_saved(self, audio_filepath: Path):
+        # ... (this method is UNCHANGED) ...
         log_extended(f"Audio segment saved (callback in MainApp): {audio_filepath.name}")
         if self.settings.beep_on_save_audio_segment:
             self.audio_service.play_beep_sound()
 
     def _handle_audio_recording_error(self, error_message: str):
+        # ... (this method is UNCHANGED) ...
         log_error(f"Audio Recording Error: {error_message}")
         messagebox.showerror("Audio Error", error_message, parent=self.root)
         if self.audio_service.is_recording_active:
@@ -724,6 +790,7 @@ class WhisperRApp:
         self._update_all_status_indicators()
 
     def _handle_transcription_complete(self, transcribed_text: str, original_audio_path: Path):
+        # ... (this method is UNCHANGED) ...
         log_essential(f"Transcription complete for {original_audio_path.name}. Length: {len(transcribed_text)}")
         if self.settings.beep_on_transcription:
             self.audio_service.play_beep_sound()
@@ -741,34 +808,39 @@ class WhisperRApp:
             self.transcription_service.execute_command_from_text(transcribed_text)
 
     def _handle_transcription_error(self, audio_path: Path, error_message: str):
+        # ... (this method is UNCHANGED) ...
         log_error(f"Transcription Error for {audio_path.name}: {error_message}")
 
     def _handle_transcribing_status_change_for_ui(self, is_transcribing: bool):
+        # ... (this method is UNCHANGED) ...
         self._ui_transcribing_active = is_transcribing
         self._update_all_status_indicators()
 
     def _perform_auto_paste(self):
+        # ... (this method is UNCHANGED) ...
         try:
-            import keyboard 
-            keyboard.press_and_release('ctrl+v')
+            import keyboard # Local import for this function if not globally needed often
+            keyboard.press_and_release('ctrl+v') # Or 'cmd+v' on macOS
             log_extended("Auto-pasted transcription.")
         except Exception as e:
             log_error(f"Error during auto-paste: {e}")
 
     def _action_open_scratchpad(self):
+        # ... (this method is UNCHANGED) ...
         if not self.scratchpad_window or not self.scratchpad_window.winfo_exists():
             self.scratchpad_window = ScratchpadWindow(self.root, self.settings, self.theme_manager)
             self.scratchpad_window.mark_as_opened_by_user() 
         else:
-            self.scratchpad_window.mark_as_opened_by_user()
+            self.scratchpad_window.mark_as_opened_by_user() # Brings to front and unhides if hidden
 
     def _action_open_config_window(self):
+        # ... (this method is UNCHANGED) ...
         if self.config_window and self.config_window.winfo_exists():
             self.config_window.lift(); self.config_window.focus_force(); return
         audio_devices = self.audio_service.get_available_audio_devices()
         self.config_window = ConfigWindowView(
             self.root, 
-            self, 
+            self, # Pass self (WhisperRApp instance) here
             settings=self.settings, theme_manager=self.theme_manager,
             audio_devices_list=audio_devices,
             save_config_callback=self._save_configuration_from_dialog,
@@ -779,16 +851,18 @@ class WhisperRApp:
         )
 
     def _action_open_command_editor(self):
+        # ... (this method is UNCHANGED) ...
         if self.command_editor_window and self.command_editor_window.winfo_exists():
             self.command_editor_window.lift(); self.command_editor_window.focus_force(); return
         self.command_editor_window = CommandEditorWindow(
             self.root, 
-            self, 
+            self, # Pass self (WhisperRApp instance) if needed by CommandEditorWindow
             current_commands=self.settings_manager.commands,
             save_callback=self._save_commands_from_editor, theme_manager=self.theme_manager
         )
 
     def _save_commands_from_editor(self, new_commands_list):
+        # ... (this method is UNCHANGED) ...
         self.settings_manager.commands = new_commands_list
         self.settings_manager.save_commands()
         self.transcription_service.update_commands_list(new_commands_list)
@@ -796,12 +870,12 @@ class WhisperRApp:
         if self.command_editor_window: self.command_editor_window.destroy()
 
     def _save_configuration_from_dialog(self, new_settings_from_dialog: AppSettings) -> bool:
+        # ... (this method is UNCHANGED) ...
         log_essential("Saving configuration from dialog...")
         old_settings = self.settings 
         self.settings_manager.settings = new_settings_from_dialog
         self.settings = self.settings_manager.settings 
 
-        # Re-initialize transcription engine if its type changed
         if old_settings.whisper_engine_type != self.settings.whisper_engine_type:
             log_essential(f"Whisper engine type changed from '{old_settings.whisper_engine_type}' to '{self.settings.whisper_engine_type}'. Re-initializing service.")
             self.transcription_service.reinitialize_engine()
@@ -815,7 +889,6 @@ class WhisperRApp:
         if old_settings.selected_audio_device_index != self.settings.selected_audio_device_index:
             self.audio_service.update_selected_audio_device(self.settings.selected_audio_device_index)
         
-        # Note: If library engine is re-added, model change logic for it would go here or in TranscriptionService.reinitialize_engine
         log_debug("Faster-Whisper related model change check skipped as it's CLI-only now.")
         
         if self.status_bar_win_manager:
@@ -850,6 +923,7 @@ class WhisperRApp:
         return hotkeys_ok
 
     def _trigger_vad_calibration(self, current_threshold: int) -> Optional[int]:
+        # ... (this method is UNCHANGED) ...
         if self.audio_service.is_recording_active:
             messagebox.showwarning("Calibration Busy", "Cannot start VAD calibration while recording is active.", parent=self.config_window if self.config_window else self.root)
             return None
@@ -862,6 +936,7 @@ class WhisperRApp:
         return recommended_threshold
 
     def _action_import_prompt_file(self):
+        # ... (this method is UNCHANGED) ...
         filepath = filedialog.askopenfilename(
             title="Import Prompt File", filetypes=(("Text files", "*.txt"), ("Markdown files", "*.md"), ("All files", "*.*")), parent=self.root
         )
@@ -875,6 +950,7 @@ class WhisperRApp:
                 messagebox.showerror("Import Error", f"Failed to import prompt: {e}", parent=self.root)
 
     def _action_export_prompt_file(self):
+        # ... (this method is UNCHANGED) ...
         content = self.main_view.get_prompt_text()
         filepath = filedialog.asksaveasfilename(
             title="Export Prompt As", filetypes=(("Text files", "*.txt"), ("Markdown files", "*.md"), ("All files", "*.*")),
@@ -888,9 +964,8 @@ class WhisperRApp:
                 messagebox.showerror("Export Error", f"Failed to export prompt: {e}", parent=self.root)
 
     def _action_transcribe_manual_file(self):
-        """Opens a file dialog to select an audio file and adds it to the transcription queue."""
+        # ... (this method is UNCHANGED) ...
         log_debug("Manual transcribe file action triggered.")
-        # Define supported file types (adjust as needed based on Whisper capabilities)
         filetypes = (
             ("Audio Files", "*.wav *.mp3 *.m4a *.aac *.ogg *.flac"),
             ("Wave files", "*.wav"),
@@ -910,41 +985,35 @@ class WhisperRApp:
 
         selected_filepath = Path(filepath_str)
         export_dir = Path(self.settings.export_folder)
-        export_dir.mkdir(parents=True, exist_ok=True) # Ensure export dir exists
+        export_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create a unique name for the copied file in the export directory
         timestamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time()*1000)%1000:03d}"
-        # Sanitize original filename slightly for use in new name
         original_stem_sanitized = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in selected_filepath.stem)
         copied_filename = f"manual_{timestamp}_{original_stem_sanitized[:30]}{selected_filepath.suffix}"
         copied_filepath = export_dir / copied_filename
 
         try:
             log_extended(f"Copying selected file '{selected_filepath}' to '{copied_filepath}' for processing.")
-            shutil.copy2(selected_filepath, copied_filepath) # copy2 preserves metadata like modification time
+            shutil.copy2(selected_filepath, copied_filepath) 
             log_essential(f"Copied manual file to: {copied_filepath.name}")
-
-            # Add the *copied* file path to the queue using the service's method
             self.transcription_service.add_to_queue(str(copied_filepath), source="manual_selection")
-            
             messagebox.showinfo("File Queued", f"'{selected_filepath.name}' was copied and added to the transcription queue.", parent=self.root)
-
         except Exception as e:
             log_error(f"Error copying or queuing manual file '{selected_filepath}': {e}", exc_info=True)
             messagebox.showerror("Error Queuing File", f"Could not queue file:\n{e}", parent=self.root)
-            # Clean up copied file if copy succeeded but queuing failed? Optional.
             if copied_filepath.exists():
                 try: copied_filepath.unlink()
                 except OSError: pass
 
 
     def _action_delete_session_files_now(self):
+        # ... (this method is UNCHANGED) ...
         export_dir = Path(self.settings.export_folder)
         parent_win = self.config_window if self.config_window and self.config_window.winfo_exists() else self.root
         if not export_dir.is_dir():
             messagebox.showwarning("Cleanup Warning", f"Export directory not found:\n{export_dir}", parent=parent_win); return
         del_audio, del_text = self.settings.clear_audio_on_exit, self.settings.clear_text_on_exit
-        if self.config_window and self.config_window.winfo_exists():
+        if self.config_window and self.config_window.winfo_exists(): # Get current values from config window if open
             del_audio = self.config_window.clear_audio_on_exit_var.get()
             del_text = self.config_window.clear_text_on_exit_var.get()
         if not (del_audio or del_text):
@@ -952,11 +1021,13 @@ class WhisperRApp:
         self._perform_file_deletion(export_dir, del_audio, del_text, ask_confirm=True, parent_window=parent_win)
 
     def _delete_session_files_on_exit(self):
+        # ... (this method is UNCHANGED) ...
         export_dir = Path(self.settings.export_folder)
         if not export_dir.is_dir(): return
         self._perform_file_deletion(export_dir, self.settings.clear_audio_on_exit, self.settings.clear_text_on_exit, ask_confirm=False)
 
     def _perform_file_deletion(self, directory: Path, delete_audio: bool, delete_text: bool, ask_confirm: bool, parent_window=None):
+        # ... (this method is UNCHANGED) ...
         files_to_delete = []
         try:
             for item in directory.iterdir():
@@ -991,6 +1062,7 @@ class WhisperRApp:
         elif ask_confirm: log_extended("File deletion cancelled by user.")
 
     def _get_current_status_indicator_color(self) -> str:
+        # ... (this method is UNCHANGED) ...
         is_rec, is_vad_speak = self.audio_service.is_recording_active, self.audio_service.is_vad_speaking
         is_trans = self._ui_transcribing_active
         if is_rec and is_trans: return COLOR_STATUS_RECORDING_AND_TRANSCRIBING
@@ -1001,6 +1073,7 @@ class WhisperRApp:
         else: return COLOR_STATUS_IDLE_NOT_RECORDING
 
     def _get_current_alt_indicator_icon_key(self) -> str:
+        # ... (this method is UNCHANGED) ...
         is_rec, is_vad_speak = self.audio_service.is_recording_active, self.audio_service.is_vad_speaking
         is_trans = self._ui_transcribing_active
         if is_rec and is_trans: return "rec_and_transcribing"
@@ -1011,6 +1084,7 @@ class WhisperRApp:
         else: return "idle"
 
     def _update_all_status_indicators(self):
+        # ... (this method is UNCHANGED) ...
         if self.is_shutting_down: return
         current_color = self._get_current_status_indicator_color()
         current_icon_key = self._get_current_alt_indicator_icon_key()
@@ -1020,28 +1094,43 @@ class WhisperRApp:
             self.root.after(0, self.alt_status_indicator.update_icon_by_state, current_icon_key)
 
 def main():
+    # --- Mutex check (UNCHANGED) ---
+    mutex = None # Define mutex outside try so finally can access it
+    mutex_created_by_this_instance = False
     try:
         import win32event
         import win32api
-        mutex_name = "Global\\WhisperR_App_Mutex"
-        log_debug(f"Creating mutex with name: {mutex_name}")
-        mutex = win32event.CreateMutex(None, False, mutex_name)
+        mutex_name = "Global\\WhisperR_App_Mutex_v2" # Added _v2 just in case old one is stuck
+        log_debug(f"Attempting to create or open mutex: {mutex_name}")
+        
+        # Try to create the mutex. If it already exists, CreateMutex returns a handle to the existing mutex 
+        # and GetLastError returns ERROR_ALREADY_EXISTS (183).
+        # If it doesn't exist, it's created, and GetLastError returns 0.
+        mutex = win32event.CreateMutex(None, True, mutex_name) # True for initial ownership
         last_error = win32api.GetLastError()
-        log_debug(f"Mutex creation result - handle: {mutex}, last_error: {last_error}")
-        if mutex is None or last_error == 183:  # ERROR_ALREADY_EXISTS
-            log_error("Another instance of WhisperR is already running, terminating.")
+        
+        if last_error == 183: # ERROR_ALREADY_EXISTS
+            log_error("Another instance of WhisperR is already running (mutex exists). Terminating.")
+            if mutex: win32api.CloseHandle(mutex) # Close the handle to the existing mutex
             sys.exit(1)
+        elif mutex is None : # Should not happen if CreateMutex is used correctly but good to check
+            log_error(f"Failed to create or open mutex (handle is None), last_error: {last_error}. Allowing to run but multiple instances might occur.")
+        else: # Mutex created successfully by this instance
+            mutex_created_by_this_instance = True
+            log_debug(f"Mutex '{mutex_name}' created successfully by this instance.")
+            
     except ImportError:
-        log_error("Failed to import win32event or win32api. Cannot check for multiple instances.")
-    except Exception as e:
-        log_error(f"Error creating mutex: {e}")
+        log_warning("win32event/win32api not found. Cannot check for multiple instances (this is normal on non-Windows).")
+    except Exception as e_mutex:
+        log_error(f"Error during mutex check: {e_mutex}. Allowing to run but multiple instances might occur.")
 
+    # --- DPI Awareness (UNCHANGED) ---
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
-        print("DPI awareness set.") 
-    except Exception as e:
-        print(f"Could not set DPI awareness (non-Windows or error): {e}")
+        log_debug("DPI awareness set (implies Windows).") 
+    except Exception as e_dpi:
+        log_debug(f"Could not set DPI awareness (non-Windows or error): {e_dpi}")
 
     root = tk.Tk()
     app = None
@@ -1057,21 +1146,39 @@ def main():
             try: app._action_quit_application()
             except Exception as shutdown_e:
                 print(f"Error during emergency shutdown: {shutdown_e}\n{traceback.format_exc()}", file=sys.stderr)
-                os._exit(1)
+                os._exit(1) # Force exit
         else:
-            try:
+            try: # Attempt to show a Tkinter error if possible
                 root_fatal = tk.Tk(); root_fatal.withdraw()
                 messagebox.showerror("Fatal Error", f"A critical error occurred: {main_loop_e}\nThe application will now close.")
                 root_fatal.destroy()
             except: pass 
-            os._exit(1)
+            os._exit(1) # Force exit
     finally:
         if app_logger.LOGGER: log_essential("Application exiting.")
         else: print("Application exiting.", file=sys.stderr)
 
-        if app_logger.LOGGER and hasattr(app_logger.LOGGER, 'log_file_handle') and app_logger.LOGGER.log_file_handle:
+        if app_logger.LOGGER and hasattr(app_logger.LOGGER, 'close') and callable(app_logger.LOGGER.close):
             app_logger.LOGGER.close()
+        
+        # Release mutex if this instance created it
+        if mutex_created_by_this_instance and mutex:
+            try:
+                import win32event # Re-import in case of complex exit paths
+                win32event.ReleaseMutex(mutex)
+                log_debug("Mutex released by this instance.")
+            except Exception as e_release_mutex:
+                log_error(f"Error releasing mutex: {e_release_mutex}")
+            finally:
+                try:
+                    import win32api # Re-import
+                    win32api.CloseHandle(mutex)
+                    log_debug("Mutex handle closed.")
+                except Exception as e_close_mutex_handle:
+                    log_error(f"Error closing mutex handle: {e_close_mutex_handle}")
+        
         sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

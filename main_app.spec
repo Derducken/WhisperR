@@ -1,13 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['main_app.py'],
     pathex=[],
     binaries=[],
     datas=[('WhisperR_icon.png', '.'), ('status_icons', 'status_icons')],
-    hiddenimports=[],
-    hookspath=['.'],
+    hiddenimports=[
+        'py7zr',
+        'pycryptodome',
+        'brotli', 
+        'zstandard',
+        'pyzstd',
+        'py7zr.helpers',
+        'py7zr.compressor'
+    ],
+    hookspath=['.', 'hook-py7zr.py'],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
