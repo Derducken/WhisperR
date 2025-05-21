@@ -5,7 +5,7 @@ a = Analysis(
     ['main_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('WhisperR_icon.png', '.'), ('status_icons', 'status_icons')],
+    datas=[('TestAudio', 'TestAudio'), ('WhisperR_icon.png', '.'), ('status_icons', 'status_icons')],
     hiddenimports=[],
     hookspath=['.'],
     hooksconfig={},

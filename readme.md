@@ -37,8 +37,15 @@ WhisperR offers ~~two~~ three modes of operation:
 Note that this was vibe-coded and tested with Faster Whisper's executable on Windows 11. I'm sharing it here because others might find it useful, too. All similar solutions I personally found on Windows either were tailored more towards transcribing subtitles, or didn't come with an easy-to-use-GUI. Don't blame me if you don't like it, it doesn't work for you, or it makes your PC gain consciousness and decide to kill your cat.
 
 ## Installation
-1. Download [Whisper Standalone Win](https://github.com/Purfview/whisper-standalone-win) (or another Whisper-compatible executable).
-2. Extract it in any folder you like.
-3. Run WhisperR. Access its configuration and select Faster Whisper's executable from the folder where you extracted it.
-4. ...
-5. Profit!
+1. Download the latest version of the app from Releases (on the right of this wall of text).
+2. Run WhisperR.
+3. Settings > Configuration.
+4. On the **General & Hotkeys** tab, click **Download/Update Engine**.
+5. If you'd like, change the **Global Hotkeys** at the end of the same page.
+6. Move to the **Audio & VAD** tab and select the correct **Audio Input Device** ("the one where your microphone is connected").
+7. Under **Auto-Pause (VAD) Settings**, click **Calibrate** and follow the instructions on that window.
+8. Move to **Notifications & Output** and enable **Auto-Paste After Transcription** if you want WhisperR to automatically paste the transcribed text into any active app (where "active app" = Notepad, Google Docs in your favorite browser, etc.)
+9. Click **Save Configuration**.
+10. Select your spoken **Language** from WhisperR's main window, and the transcription model you want to use (**medium** and **large** should be the best for most users).
+
+For more information and detailed instructions on how to install, configure, and use WhisperR, check [this tutorial](https://medium.com/@Ducklord/cf2ef6763841).
