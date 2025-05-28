@@ -322,6 +322,7 @@ class MainWindowView:
         else:
              log_error(f"Cannot set command for unknown or uninitialized button: {button_name}")
 
+
     def add_menu_command(self, menu_type: str, label: Optional[str] = None, command: Optional[Callable] = None, **kwargs): # UNCHANGED
         menu_map = { "file": self.file_menu, "settings": self.settings_menu, "queue": self.queue_menu }
         target_menu = menu_map.get(menu_type.lower())

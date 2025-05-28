@@ -95,26 +95,75 @@ class GitHubReleaseDownloader:
             return None
 
         log_debug(f"Available assets for release '{release_data.get('name', 'N/A')}': {[a['name'] for a in assets]}")
-        found_asset = None
-        if prefer_windows:
-            for asset in assets:
-                name_lower = asset['name'].lower()
-                if asset_keyword.lower() in name_lower and 'windows' in name_lower and name_lower.endswith('.7z'):
-                    found_asset = asset
-                    break
-        if not found_asset:
-            for asset in assets:
-                name_lower = asset['name'].lower()
-                if asset_keyword.lower() in name_lower and name_lower.endswith('.7z'):
-                    found_asset = asset
-                    break
-        if not found_asset:
+        # Collect all matching assets
+        matching_assets = []
+        for asset in assets:
+            name_lower = asset['name'].lower()
+            if asset_keyword.lower() in name_lower:
+                if prefer_windows and 'windows' not in name_lower:
+                    continue
+                if not name_lower.endswith('.7z'):
+                    continue
+                matching_assets.append(asset)
+
+        if not matching_assets:
             log_warning(f"Could not find a '.7z' asset matching '{asset_keyword}'. Looking for any asset matching '{asset_keyword}'.")
             for asset in assets:
                 name_lower = asset['name'].lower()
                 if asset_keyword.lower() in name_lower:
-                    found_asset = asset
+                    matching_assets.append(asset)
                     break
+
+        # Sort matching assets by upload time (newest first)
+        matching_assets.sort(key=lambda x: x['updated_at'], reverse=True)
+
+        def _parse_version(name: str) -> List[int]:
+            """Parse version string from filename into list of integers."""
+            # Look for patterns like r192.3.4 or v1.2.3
+            version_str = None
+            if 'r' in name.lower():
+                try:
+                    version_str = name.lower().split('r')[1].split('_')[0]
+                except IndexError:
+                    return []
+            elif 'v' in name.lower():
+                try:
+                    version_str = name.lower().split('v')[1].split('_')[0]
+                except IndexError:
+                    return []
+            
+            if not version_str:
+                return []
+            
+            # Split into components and convert to integers
+            try:
+                return [int(part) for part in version_str.split('.')]
+            except ValueError:
+                return []
+
+        def _compare_versions(v1: List[int], v2: List[int]) -> int:
+            """Compare two version lists. Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal."""
+            for i in range(max(len(v1), len(v2))):
+                part1 = v1[i] if i < len(v1) else 0
+                part2 = v2[i] if i < len(v2) else 0
+                if part1 > part2:
+                    return 1
+                elif part1 < part2:
+                    return -1
+            return 0
+
+        # Try to parse version numbers from filenames
+        versioned_assets = []
+        for asset in matching_assets:
+            version_parts = _parse_version(asset['name'])
+            versioned_assets.append((version_parts, asset))
+
+        # Sort by version (newest first) then by upload time
+        versioned_assets.sort(
+            key=lambda x: (x[0], x[1]['updated_at']),
+            reverse=True
+        )
+        found_asset = versioned_assets[0][1] if versioned_assets else None
         
         if found_asset:
             asset_url = found_asset['browser_download_url']
@@ -236,16 +285,31 @@ class GitHubReleaseDownloader:
         if not extracted_successfully:
             try:
                 self._status("Attempting extraction with system '7z' command...")
-                seven_zip_exe = "7z" 
-                try:
-                    subprocess.run([seven_zip_exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as chk_err:
-                    msg = f"System '7z' command not found or not responsive: {chk_err}. Cannot extract."
+                # Check common Windows 7z.exe locations
+                seven_zip_paths = [
+                    "7z",  # Check PATH first
+                    "C:\\Program Files\\7-Zip\\7z.exe",
+                    "C:\\Program Files (x86)\\7-Zip\\7z.exe"
+                ]
+                
+                seven_zip_exe = None
+                for path in seven_zip_paths:
+                    try:
+                        subprocess.run([path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        seven_zip_exe = path
+                        break
+                    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                        continue
+                
+                if not seven_zip_exe:
+                    msg = ("7-Zip not found. Please ensure 7-Zip is installed or provide the path to 7z.exe.\n\n"
+                          "You can download 7-Zip from https://www.7-zip.org/")
                     self._notify_error(msg)
                     return False
 
-                cmd = [seven_zip_exe, 'x', str(archive_path), f'-o{str(extract_to_dir)}', '-aoa', '-y'] 
+                cmd = [seven_zip_exe, 'x', str(archive_path), f'-o{str(extract_to_dir)}', '-aoa', '-y']
+                log_extended(f"Using 7z at: {seven_zip_exe}")
                 log_debug(f"Running system 7z command: {' '.join(cmd)}")
                 
                 startupinfo = None

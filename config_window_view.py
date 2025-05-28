@@ -173,6 +173,15 @@ class ConfigWindowView(tk.Toplevel):
         self.download_progressbar.grid(row=4, column=0, columnspan=3, pady=(2,5), sticky=tk.EW)
         self.download_progressbar.grid_remove() 
 
+        # Add Manual Download Instructions button
+        self.manual_download_btn = ttk.Button(
+            engine_frame,
+            text="(In case that failed...) Manual Download Instructions",
+            command=self.show_manual_download_instructions,
+            style='TButton'
+        )
+        self.manual_download_btn.grid(row=5, column=0, columnspan=3, pady=(5,0), sticky=tk.EW)
+
         engine_frame.columnconfigure(1, weight=1)
         sec_export = ConfigSection(parent_tab, "File Export", self.theme_manager)
         export_frame = sec_export.get_inner_frame()
@@ -368,6 +377,48 @@ class ConfigWindowView(tk.Toplevel):
     def _browse_whisper_executable(self): self._browse_file("Select Whisper Executable", [("Executables", "*.exe"), ("All files", "*.*")], self.whisper_executable_var)
     def _browse_export_folder(self): self._browse_file("Select Export Folder", [], self.export_folder_var, is_folder=True)
     def _browse_backup_folder(self): self._browse_file("Select Backup Folder", [], self.backup_folder_var, is_folder=True)
+
+    def show_manual_download_instructions(self):
+            """Show dialog with manual download instructions with URL button"""
+            import webbrowser
+            from tkinter import Toplevel, ttk
+            
+            instructions = (
+            "Manual Faster-Whisper Installation:\n\n"
+            "1. Click the Open URL button and download the latest version of Faster Whisper XXL.\n\n"
+            "2. Extract the archive to a folder using 7-Zip.\n\n"
+            "3. Notice that, inside that folder, you'll find the file:\n\n"
+            "   faster-whisper-xxl.exe\n\n"
+            "4. Close this window.\n\n"
+            "5. Click the Browse button next to Executable Path (above).\n\n"
+            "6. Select the faster-whisper-xxl.exe file.\n\n"
+            )
+            
+            # Create custom dialog instead of using messagebox
+            dialog = Toplevel(self)
+            dialog.title("Manual Download Instructions")
+            dialog.resizable(False, False)
+            
+            # Add instruction text
+            ttk.Label(dialog, text=instructions, justify=tk.LEFT).pack(padx=20, pady=10)
+            
+            # Add button frame
+            button_frame = ttk.Frame(dialog)
+            button_frame.pack(pady=(0, 10), padx=10, fill=tk.X)
+            
+            # Add Open URL button
+            ttk.Button(
+                button_frame,
+                text="Open URL",
+                command=lambda: webbrowser.open("https://github.com/Purfview/whisper-standalone-win/releases")
+            ).pack(side=tk.LEFT, expand=True, padx=5)
+            
+            # Add OK button
+            ttk.Button(
+                button_frame,
+                text="OK",
+                command=dialog.destroy
+            ).pack(side=tk.LEFT, expand=True, padx=5)
 
     def _record_hotkey_ui(self, target_var: tk.StringVar):
         self.focus_set(); self.update_idletasks()
